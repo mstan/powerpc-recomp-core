@@ -1,0 +1,243 @@
+cmake_minimum_required(VERSION 3.16)
+project(DolRecomp C)
+
+option(DOLRECOMP_USE_CCACHE "Use ccache when it is available" ON)
+if(DOLRECOMP_USE_CCACHE AND NOT CMAKE_C_COMPILER_LAUNCHER)
+    find_program(DOLRECOMP_CCACHE_PROGRAM ccache)
+    if(DOLRECOMP_CCACHE_PROGRAM)
+        set(CMAKE_C_COMPILER_LAUNCHER "${DOLRECOMP_CCACHE_PROGRAM}")
+        message(STATUS "DolRecomp compiler cache: ${DOLRECOMP_CCACHE_PROGRAM}")
+    endif()
+endif()
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# Portable warnings for local development and CI.
+if(MSVC)
+    add_compile_options(/W3)
+else()
+    add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+endif()
+
+if(NOT DEFINED ZLIB_ROOT)
+    if(DEFINED ENV{DEVKITPRO})
+        set(_devkitpro "$ENV{DEVKITPRO}")
+        if(MSYS AND _devkitpro MATCHES "^[A-Za-z]:")
+            execute_process(
+                COMMAND cygpath -u "${_devkitpro}"
+                OUTPUT_VARIABLE _devkitpro
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+        endif()
+    elseif(EXISTS "/opt/devkitpro")
+        set(_devkitpro "/opt/devkitpro")
+    endif()
+
+    if(DEFINED _devkitpro)
+        set(_devkitpro_zlib "${_devkitpro}/msys2/ucrt64")
+        if(EXISTS "${_devkitpro_zlib}/include/zlib.h")
+            set(ZLIB_ROOT "${_devkitpro_zlib}")
+        endif()
+    endif()
+endif()
+
+find_package(ZLIB QUIET)
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+endif()
+
+set(DOLRECOMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+add_library(dr_cpu STATIC src/cpu/cpu.c)
+target_include_directories(dr_cpu PUBLIC ${DOLRECOMP_SRC})
+if(NOT WIN32)
+    target_link_libraries(dr_cpu PUBLIC m)
+endif()
+
+add_library(dr_platform STATIC
+    src/platform/fs.c
+    src/platform/strutil.c
+    src/platform/pathlist.c
+    src/platform/process.c
+)
+target_include_directories(dr_platform PUBLIC ${DOLRECOMP_SRC})
+
+add_library(dr_frontend STATIC
+    src/frontend/decoder.c
+    src/frontend/container/dol.c
+    src/frontend/container/rel.c
+    src/frontend/container/rpx.c
+    src/frontend/container/ipl.c
+    src/frontend/container/disc_extract.c
+)
+target_include_directories(dr_frontend PUBLIC ${DOLRECOMP_SRC})
+if(ZLIB_FOUND)
+    target_compile_definitions(dr_frontend PUBLIC DOLRECOMP_HAVE_ZLIB)
+    target_link_libraries(dr_frontend PUBLIC ZLIB::ZLIB)
+endif()
+
+add_library(dr_analysis STATIC
+    src/analysis/embedded_data.c
+    src/analysis/smc.c
+)
+target_include_directories(dr_analysis PUBLIC ${DOLRECOMP_SRC})
+target_link_libraries(dr_analysis PUBLIC dr_frontend)
+
+add_library(dr_backend STATIC
+    src/backend/emitter.c
+    src/backend/ppc_cycles.c
+    src/backend/dispatch.c
+    src/backend/codegen.c
+)
+target_include_directories(dr_backend PUBLIC ${DOLRECOMP_SRC})
+target_link_libraries(dr_backend PUBLIC dr_frontend dr_analysis)
+if(NOT WIN32)
+    target_link_libraries(dr_backend PUBLIC Threads::Threads)
+endif()
+
+add_library(dr_app STATIC
+    src/app/cli.c
+    src/app/database.c
+    src/app/setup.c
+    src/app/paths.c
+    src/app/pipeline.c
+)
+target_include_directories(dr_app PUBLIC ${DOLRECOMP_SRC})
+target_link_libraries(dr_app PUBLIC dr_backend dr_analysis dr_frontend dr_platform)
+
+add_executable(dolrecomp src/app/main.c)
+target_link_libraries(dolrecomp PRIVATE dr_app)
+
+enable_testing()
+
+add_executable(test_opcodes tests/test_opcodes.c)
+target_link_libraries(test_opcodes PRIVATE dr_frontend)
+add_test(NAME opcodes COMMAND test_opcodes)
+
+add_executable(test_cross_check tests/test_cross_check.c)
+target_link_libraries(test_cross_check PRIVATE dr_frontend)
+add_test(NAME cross_check COMMAND test_cross_check)
+
+add_executable(test_dol tests/test_dol.c)
+target_link_libraries(test_dol PRIVATE dr_frontend)
+add_test(NAME dol COMMAND test_dol)
+
+add_executable(test_ipl tests/test_ipl.c)
+target_link_libraries(test_ipl PRIVATE dr_frontend)
+add_test(NAME ipl COMMAND test_ipl)
+
+add_executable(test_rel tests/test_rel.c)
+target_link_libraries(test_rel PRIVATE dr_frontend)
+add_test(NAME rel COMMAND test_rel)
+
+add_executable(test_rpx tests/test_rpx.c)
+target_link_libraries(test_rpx PRIVATE dr_frontend)
+add_test(NAME rpx COMMAND test_rpx)
+
+add_executable(test_disc_extract tests/test_disc_extract.c)
+target_include_directories(test_disc_extract PRIVATE ${DOLRECOMP_SRC})
+add_test(NAME disc_extract
+    COMMAND test_disc_extract
+        $<SHELL_PATH:$<TARGET_FILE:dolrecomp>>
+        $<SHELL_PATH:${CMAKE_CURRENT_BINARY_DIR}/disc_extract_test>
+)
+
+add_executable(test_pc_reference tests/test_pc_reference.c)
+target_link_libraries(test_pc_reference PRIVATE dr_frontend dr_cpu)
+add_test(NAME pc_reference COMMAND test_pc_reference)
+
+add_executable(test_jumptables tests/test_jumptables.c)
+target_link_libraries(test_jumptables PRIVATE dr_backend dr_cpu)
+add_test(NAME jumptables COMMAND test_jumptables)
+
+add_executable(test_dispatch tests/test_dispatch.c)
+target_link_libraries(test_dispatch PRIVATE dr_backend)
+add_test(NAME dispatch COMMAND test_dispatch)
+
+add_executable(test_codegen_emit tests/test_codegen_emit.c)
+target_link_libraries(test_codegen_emit PRIVATE dr_backend)
+add_test(NAME codegen_compile
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_codegen_emit>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/codegen_check.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+        -DHOST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/codegen_compile.cmake
+)
+
+# Ported from upstream DolRecomp tests/test_fpscr.c, tests/test_float_semantics.c
+# and tests/test_c_execute.c (beads-u2x.6): backend-agnostic (dr_cpu-only)
+# regression gate for the Gekko non-FMA scalar float helpers (ppc_fcmp,
+# ppc_fadds/fsubs/fmuls/fdivs/fadd/fsub/fmul/fdiv, ppc_frsp), plus an
+# end-to-end emit -> compile -> execute proof via the additive
+# test_codegen_emit.c fixtures above. These build and (for fpscr/
+# float_semantics) may still fail to LINK until the concurrent helper port
+# lands in recompiler/src/cpu/cpu.c -- see that bead for status.
+add_executable(test_fpscr tests/test_fpscr.c)
+target_link_libraries(test_fpscr PRIVATE dr_cpu)
+add_test(NAME fpscr COMMAND test_fpscr)
+
+add_executable(test_float_semantics tests/test_float_semantics.c)
+target_link_libraries(test_float_semantics PRIVATE dr_cpu)
+add_test(NAME float_semantics COMMAND test_float_semantics)
+
+set(DOLRECOMP_C_TEST_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/c_execute_generated.c)
+add_custom_command(
+    OUTPUT ${DOLRECOMP_C_TEST_SOURCE}
+    COMMAND test_codegen_emit ${DOLRECOMP_C_TEST_SOURCE}
+    DEPENDS test_codegen_emit
+    VERBATIM
+)
+add_executable(test_c_execute
+    tests/test_c_execute.c
+    ${DOLRECOMP_C_TEST_SOURCE}
+)
+target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
+target_link_libraries(test_c_execute PRIVATE dr_cpu)
+add_test(NAME c_execute COMMAND test_c_execute)
+
+# Phase D2 (codegen speed campaign): real link+execute exactness proof for
+# the in-chunk bl/blr shadow-call-stack fast path (emitter.c's
+# emit_direct_branch lk-branch push / emit_dynamic_branch is_blr_class pop).
+# Generates a synthetic chunk (test_bl_shadow_gen.c), links it with the fixed
+# harness (test_bl_shadow_harness.c), and RUNS it -- see bl_shadow_run.cmake
+# and the harness's own header comment for what it asserts.
+add_executable(test_bl_shadow_gen tests/test_bl_shadow_gen.c)
+target_link_libraries(test_bl_shadow_gen PRIVATE dr_backend)
+add_test(NAME bl_shadow_exactness
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_bl_shadow_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/bl_shadow_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bl_shadow_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+        -DHOST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/bl_shadow_run.cmake
+)
+
+# Campaign 3: execute the general lwz/cmplwi/backward-beq poll-loop peephole
+# through both its compact derived path and its untouched uniform fallback.
+add_executable(test_poll_loop_gen tests/test_poll_loop_gen.c)
+target_link_libraries(test_poll_loop_gen PRIVATE dr_backend)
+add_test(NAME poll_loop_exactness
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_poll_loop_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/poll_loop_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_poll_loop_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+        -DHOST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake
+)
