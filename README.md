@@ -1,72 +1,42 @@
-# DolRecomp — gcnrecomp integration fork
+# powerpc-recomp-core
 
-This directory is vendored from the project-specific DolRecomp fork used by
-[gcnrecomp](https://github.com/mstan/gcnrecompiled), an LLE-first experiment
-that statically recompiles the Nintendo GameCube IPL and runs it against a
-low-level hardware runtime.
+Shared PowerPC static-recompiler source package for GameCube/Wii low-level
+recompilation projects. The initial consumers are gcnllr and wiillr.
 
-For the canonical DolRecomp project, general-purpose GameCube/Wii/Wii U
-recompilation, documentation, support, and new development, use
-**[ExpansionPak/DolRecomp](https://github.com/ExpansionPak/DolRecomp)**.
-This fork is not intended to replace or compete with the official project.
+The package contains instruction decoding, CPU semantics, code analysis and C
+emission, with Gekko and Broadway profiles. Consumers own their machine runtime,
+devices, boot policy and generated-code registration. Existing container readers
+and the `dolrecomp` command-line tool remain available for compatibility.
 
-The public integration history lives at
-**[mstan/DolRecomp](https://github.com/mstan/DolRecomp)**. See
-[UPSTREAM.md](UPSTREAM.md) for the exact vendored commit.
-
-## What this branch adds
-
-- A GameCube IPL frontend for a user-supplied, descrambled boot-ROM payload,
-  including explicit load base and entry-point handling.
-- Generated-code ABI changes needed by the gcnrecomp LLE runtime.
-- O(1) generated dispatch and nullable host-call dispatch.
-- Optional derived-cycle accounting, deadline yields, and coalesced basic-block
-  cycle charging.
-- Generated MEM1 fast paths and exact in-chunk `bl`/`blr` shadow handling.
-- Code-generation performance work: selective PC stamps, invocation-local
-  state, inline helper paths, and a class-based tight polling-loop yield.
-- Focused compile-and-run regression tests for the shadow-call and polling-loop
-  transformations.
-
-The IPL mode and runtime ABI are gcnrecomp-specific. The dispatch, exactness,
-testing, and code-generation improvements are the most plausible candidates
-for focused upstream work.
+This is an extraction of the adapted DolRecomp compiler used by gcnllr, with
+its existing instruction and code-generation sources preserved. It is not a
+complete console runtime or a claim of Wii firmware/game compatibility.
+See [extraction details](EXTRACTION.md).
 
 ## Build and test
 
-Requirements are the same as upstream: CMake, a C11 compiler, and optional
-zlib support for compressed RPX input.
+Requires CMake 3.16 or newer and a C11 compiler. Zlib is optional for compressed
+RPX input.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel 2
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-This directory does not include Nintendo firmware, game images, save data, or
-generated IPL source. Those inputs remain outside Git.
+Consumers can add this source directory with CMake and use the existing
+`dr_cpu`, `dr_frontend`, `dr_analysis` and `dr_backend` library targets. Compiler
+CPU-state helpers and the consumer runtime ABI are separate integration choices;
+this package does not prescribe a console memory map or device implementation.
 
-## Upstreaming
+The 16-test suite covers decoding, containers, dispatch, floating-point
+semantics and emitted-code compilation/execution. Firmware, games, generated
+guest code and native saves are not included.
 
-Issues in the general recompiler should be reproduced against and reported to
-the official project. If a change here is useful upstream, prefer a small,
-focused pull request against `ExpansionPak/DolRecomp` rather than merging the
-integration branch wholesale.
+## License and upstream
 
-The public fork preserves the individual recompiler steps so upstream authors
-can inspect or cherry-pick narrowly scoped work.
-
-## Attribution and development disclosure
-
-DolRecomp is authored and maintained by the ExpansionPak contributors. Their
-copyright, contributor records, and GPL-3.0 license are preserved here.
-
-The changes on the `gcnrecomp` branch are maintained separately by the
-gcnrecomp project and include AI-assisted development under human direction
-and review. They must not be attributed to the official DolRecomp authors, and
-the official project's own development statements apply only to its upstream
-repository.
-
-## License
-
-GPL-3.0. See [LICENSE](LICENSE) and [UPSTREAM.md](UPSTREAM.md).
+Imported copyright notices and the [GPL license](LICENSE) are preserved.
+The compiler derives from [ExpansionPak/DolRecomp](https://github.com/ExpansionPak/DolRecomp)
+through its gcnrecomp integration fork. See [provenance](UPSTREAM.md) and the
+[original integration README](UPSTREAM_README.md) for attribution and history.
+For the general-purpose upstream compiler, use the canonical DolRecomp project.
