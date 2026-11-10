@@ -112,6 +112,10 @@ target_link_libraries(dolrecomp PRIVATE dr_app)
 
 enable_testing()
 
+add_executable(test_broadway_compiler tests/test_broadway.c)
+target_link_libraries(test_broadway_compiler PRIVATE dr_cpu)
+add_test(NAME broadway_spr_compiler COMMAND test_broadway_compiler)
+
 add_executable(test_opcodes tests/test_opcodes.c)
 target_link_libraries(test_opcodes PRIVATE dr_frontend)
 add_test(NAME opcodes COMMAND test_opcodes)

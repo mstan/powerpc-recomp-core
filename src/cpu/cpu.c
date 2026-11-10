@@ -454,6 +454,16 @@ static const u8 ppc_spr_access[1024] = {
     [1022] = SPR_RW,
 };
 
+/* Broadway adds BAT4..7 and HID4. The selected CPU model is exposed through
+ * the read-only PVR; GameCube must retain illegal-SPR behavior here. These
+ * registers retain architectural state even in the flat-memory host. */
+static u8 ppc_spr_permissions(const CPUState* cpu, u16 spr) {
+    if (cpu->spr[287] == PPC_BROADWAY_PVR &&
+        ((spr >= 560 && spr <= 575) || spr == 1011))
+        return SPR_RW;
+    return spr < 1024 ? ppc_spr_access[spr] : 0;
+}
+
 static u16 ppc_spr_storage_index(u16 spr) {
     switch (spr) {
     case 936: return 952;
@@ -500,7 +510,7 @@ u32 ppc_mfspr(CPUState* cpu, u16 spr, u32 cia) {
         break;
     }
 
-    if (spr < 1024 && (ppc_spr_access[spr] & SPR_READ))
+    if (ppc_spr_permissions(cpu, spr) & SPR_READ)
         return cpu->spr[ppc_spr_storage_index(spr)];
 
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
@@ -556,7 +566,7 @@ void ppc_mtspr(CPUState* cpu, u16 spr, u32 value, u32 cia) {
         break;
     }
 
-    if (spr < 1024 && (ppc_spr_access[spr] & SPR_WRITE)) {
+    if (ppc_spr_permissions(cpu, spr) & SPR_WRITE) {
         cpu->spr[ppc_spr_storage_index(spr)] = value;
         return;
     }
