@@ -968,6 +968,8 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "    if (ea >= GC_RAM_BASE && ea < GC_RAM_BASE + GC_MAIN_RAM_SIZE) return ea - GC_RAM_BASE;\n"
         "    if (ea >= GC_RAM_UNCACHED && ea < GC_RAM_UNCACHED + GC_MAIN_RAM_SIZE) return ea - GC_RAM_UNCACHED;\n"
         "    if (ea < GC_MAIN_RAM_SIZE) return ea;\n"
+        "    if (ea >= WII_MEM2_BASE && ea - WII_MEM2_BASE < WII_MEM2_SIZE) return 0x10000000u + ea - WII_MEM2_BASE;\n"
+        "    if (ea >= WII_MEM2_UNCACHED && ea - WII_MEM2_UNCACHED < WII_MEM2_SIZE) return 0x10000000u + ea - WII_MEM2_UNCACHED;\n"
         "    return ea; /* not RAM: no alias to fold, compare raw */\n"
         "}\n"
         "\n"

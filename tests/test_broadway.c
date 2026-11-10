@@ -33,6 +33,16 @@ int main(void) {
     ppc_mtspr(&cpu,287,PPC_GEKKO_PVR,0x3400);
     CHECK(cpu.exception & PPC_EXC_PROGRAM);
     CHECK(cpu.spr[287]==PPC_BROADWAY_PVR);
+    CHECK(cpu_alloc_mem2(&cpu,64));
+    mem_write32(&cpu,0x10000004,0x12345678,0x3400);
+    CHECK(mem_read32(&cpu,0x90000004,0x3400)==0x12345678);
+    CHECK(mem_read32(&cpu,0xd0000004,0x3400)==0x12345678);
+    cpu.reserve_valid=true;cpu.reserve_addr=0x90000000;
+    mem_write32(&cpu,0xd0000004,0xaabbccdd,0x3400);
+    CHECK(!cpu.reserve_valid);
+    cpu.reserve_valid=true;cpu.reserve_addr=0xd0000000;
+    mem_write8(&cpu,0x10000003,0xff,0x3400);
+    CHECK(!cpu.reserve_valid && cpu.mem2[3]==0xff);
     cpu_free(&cpu);
     return 0;
 }

@@ -106,6 +106,11 @@ static u8* resolve_addr(CPUState* cpu, u32 addr, u32* avail) {
     }
 
     if (cpu->mem2 && cpu->mem2_size) {
+        if (addr >= 0x10000000u && addr - 0x10000000u < cpu->mem2_size) {
+            u32 offset = addr - 0x10000000u;
+            *avail = cpu->mem2_size - offset;
+            return cpu->mem2 + offset;
+        }
         if (addr >= WII_MEM2_BASE && addr < WII_MEM2_BASE + cpu->mem2_size) {
             u32 offset = addr - WII_MEM2_BASE;
             *avail = cpu->mem2_size - offset;
@@ -146,7 +151,11 @@ static u32 reservation_key(u32 addr) {
         return addr - GC_RAM_UNCACHED;
     if (addr < GC_MAIN_RAM_SIZE)
         return addr;
-    return addr; /* not RAM: no alias to fold, compare raw */
+    if (addr >= WII_MEM2_BASE && addr - WII_MEM2_BASE < WII_MEM2_SIZE)
+        return 0x10000000u + addr - WII_MEM2_BASE;
+    if (addr >= WII_MEM2_UNCACHED && addr - WII_MEM2_UNCACHED < WII_MEM2_SIZE)
+        return 0x10000000u + addr - WII_MEM2_UNCACHED;
+    return addr; /* physical memory or non-RAM */
 }
 
 static void clear_matching_reservation(CPUState* cpu, u32 addr) {
