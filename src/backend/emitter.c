@@ -1964,18 +1964,19 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
         break;
 
     case PPC_OP_PS_SUM1:
-        fprintf(out, "    ctx->fpr[%u] = dolrecomp_ps_round(ctx->fpr[%u]);\n",
-                inst->rD, inst->rC);
-        fprintf(out, "    ctx->ps1[%u] = dolrecomp_ps_round((f32)ctx->fpr[%u] + (f32)ctx->ps1[%u]);\n",
-                inst->rD, inst->rA, inst->rB);
+        fprintf(out, "    { f64 ps0 = dolrecomp_ps_round(ctx->fpr[%u]);\n", inst->rC);
+        fprintf(out, "      f64 ps1 = dolrecomp_ps_round((f32)ctx->fpr[%u] + (f32)ctx->ps1[%u]);\n",
+                inst->rA, inst->rB);
+        fprintf(out, "      ctx->fpr[%u] = ps0; ctx->ps1[%u] = ps1; }\n", inst->rD, inst->rD);
         if (inst->rc) emit_set_cr1_from_fpscr(out);
         break;
 
     case PPC_OP_PS_MULS0:
-        fprintf(out, "    ctx->fpr[%u] = dolrecomp_ps_round((f32)ctx->fpr[%u] * (f32)ctx->fpr[%u]);\n",
-                inst->rD, inst->rA, inst->rC);
-        fprintf(out, "    ctx->ps1[%u] = dolrecomp_ps_round((f32)ctx->ps1[%u] * (f32)ctx->fpr[%u]);\n",
-                inst->rD, inst->rA, inst->rC);
+        fprintf(out, "    { f64 ps0 = dolrecomp_ps_round((f32)ctx->fpr[%u] * (f32)ctx->fpr[%u]);\n",
+                inst->rA, inst->rC);
+        fprintf(out, "      f64 ps1 = dolrecomp_ps_round((f32)ctx->ps1[%u] * (f32)ctx->fpr[%u]);\n",
+                inst->rA, inst->rC);
+        fprintf(out, "      ctx->fpr[%u] = ps0; ctx->ps1[%u] = ps1; }\n", inst->rD, inst->rD);
         if (inst->rc) emit_set_cr1_from_fpscr(out);
         break;
 
@@ -1988,10 +1989,11 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
         break;
 
     case PPC_OP_PS_MADDS0:
-        fprintf(out, "    ctx->fpr[%u] = dolrecomp_ps_round((f32)ctx->fpr[%u] * (f32)ctx->fpr[%u] + (f32)ctx->fpr[%u]);\n",
-                inst->rD, inst->rA, inst->rC, inst->rB);
-        fprintf(out, "    ctx->ps1[%u] = dolrecomp_ps_round((f32)ctx->ps1[%u] * (f32)ctx->fpr[%u] + (f32)ctx->ps1[%u]);\n",
-                inst->rD, inst->rA, inst->rC, inst->rB);
+        fprintf(out, "    { f64 ps0 = dolrecomp_ps_round((f32)ctx->fpr[%u] * (f32)ctx->fpr[%u] + (f32)ctx->fpr[%u]);\n",
+                inst->rA, inst->rC, inst->rB);
+        fprintf(out, "      f64 ps1 = dolrecomp_ps_round((f32)ctx->ps1[%u] * (f32)ctx->fpr[%u] + (f32)ctx->ps1[%u]);\n",
+                inst->rA, inst->rC, inst->rB);
+        fprintf(out, "      ctx->fpr[%u] = ps0; ctx->ps1[%u] = ps1; }\n", inst->rD, inst->rD);
         if (inst->rc) emit_set_cr1_from_fpscr(out);
         break;
 

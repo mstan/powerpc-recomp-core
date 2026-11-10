@@ -174,6 +174,13 @@ int main(int argc, char** argv) {
     paired_merge[1] = ppc_decode(0x4E800020u, BASE + 0x1074);
     emit_function(out, paired_merge, 2, BASE + 0x1070);
 
+    PPCInst paired_overlap[4];
+    paired_overlap[0] = ppc_decode((4u<<26)|(1u<<21)|(1u<<16)|(2u<<11)|(3u<<6)|(11u<<1), BASE+0x1080);
+    paired_overlap[1] = ppc_decode((4u<<26)|(4u<<21)|(5u<<16)|(4u<<6)|(12u<<1), BASE+0x1084);
+    paired_overlap[2] = ppc_decode((4u<<26)|(6u<<21)|(7u<<16)|(8u<<11)|(6u<<6)|(14u<<1), BASE+0x1088);
+    paired_overlap[3] = ppc_decode(0x4E800020u, BASE+0x108C);
+    emit_function(out, paired_overlap, 4, BASE+0x1080);
+
     FunctionList funcs = {0};
     if (!function_list_add(&funcs, BASE, BASE + (u32)count * 4u) ||
         !function_list_add(&funcs, BASE + 0x1000, BASE + 0x100C) ||
@@ -182,7 +189,8 @@ int main(int argc, char** argv) {
         !function_list_add(&funcs, BASE + 0x1040, BASE + 0x1058) ||
         !function_list_add(&funcs, BASE + 0x1060, BASE + 0x1068) ||
         !function_list_add(&funcs, BASE + 0x1068, BASE + 0x1070) ||
-        !function_list_add(&funcs, BASE + 0x1070, BASE + 0x1078)) {
+        !function_list_add(&funcs, BASE + 0x1070, BASE + 0x1078) ||
+        !function_list_add(&funcs, BASE + 0x1080, BASE + 0x1090)) {
         function_list_free(&funcs);
         free(insts);
         if (out != stdout) fclose(out);

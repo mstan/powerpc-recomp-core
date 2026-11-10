@@ -28,6 +28,7 @@ void func_80004040(CPUState* ctx);
 void func_80004060(CPUState* ctx);
 void func_80004068(CPUState* ctx);
 void func_80004070(CPUState* ctx);
+void func_80004080(CPUState* ctx);
 
 static u64 bits_of(f64 value) {
     u64 bits;
@@ -113,6 +114,22 @@ int main(void) {
                 compare_ok, record_ok, merge_ok, cpu.fpscr, cpu.cr);
     }
 
+    cpu.fpr[1] = 2.0; cpu.ps1[1] = 3.0;
+    cpu.fpr[2] = 4.0; cpu.ps1[2] = 11.0;
+    cpu.fpr[3] = 9.0;
+    cpu.fpr[4] = 4.0;
+    cpu.fpr[5] = 2.0; cpu.ps1[5] = 3.0;
+    cpu.fpr[6] = 4.0;
+    cpu.fpr[7] = 2.0; cpu.ps1[7] = 3.0;
+    cpu.fpr[8] = 1.0; cpu.ps1[8] = 2.0;
+    cpu.pc = 0x80004080u;
+    func_80004080(&cpu);
+    int overlap_ok = cpu.fpr[1] == 9.0 && cpu.ps1[1] == 13.0 &&
+                     cpu.fpr[4] == 8.0 && cpu.ps1[4] == 12.0 &&
+                     cpu.fpr[6] == 9.0 && cpu.ps1[6] == 14.0;
+    if (!overlap_ok)
+        fprintf(stderr, "paired overlap sum=%g,%g mul=%g,%g madd=%g,%g\n",
+                cpu.fpr[1],cpu.ps1[1],cpu.fpr[4],cpu.ps1[4],cpu.fpr[6],cpu.ps1[6]);
     cpu_free(&cpu);
-    return !(integer_ok && memory_ok && compare_ok && record_ok && merge_ok);
+    return !(integer_ok && memory_ok && compare_ok && record_ok && merge_ok && overlap_ok);
 }
