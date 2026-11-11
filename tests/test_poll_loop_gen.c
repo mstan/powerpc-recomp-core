@@ -55,6 +55,11 @@ int main(int argc, char** argv) {
 
     emit_header(out);
     emit_function(out, insts, 4, BASE);
+    /* The SDK idle loop uses signed cmpwi, including negative exit values. */
+    for(unsigned i=0;i<4;++i)insts[i].address+=0x1000;
+    insts[1].op=PPC_OP_CMPI;insts[1].simm=0;
+    insts[2].branch_target=BASE+0x1000;
+    emit_function(out,insts,4,BASE+0x1000);
     emit_footer(out);
 
     if (out != stdout && fclose(out) != 0) {

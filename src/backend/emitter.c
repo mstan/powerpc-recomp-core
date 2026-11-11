@@ -438,7 +438,7 @@ static bool branch_target_is_local(u32 func_start, u32 func_end, u32 target) {
  * Recognize the common three-instruction hardware/firmware wait shape:
  *
  *   lwz     rD, disp(rA)
- *   cmplwi  crF, rD, imm
+ *   cmp[l]wi crF, rD, imm
  *   beq     crF, loop
  *
  * The ordinary emitter already keeps a taken backward conditional inside the
@@ -451,8 +451,13 @@ static bool branch_target_is_local(u32 func_start, u32 func_end, u32 target) {
  * involved -- and deliberately accepts only the simplest fully-auditable
  * shape.  The normal instruction bodies/labels remain emitted as the exact
  * fallback for uniform mode, non-RAM/unaligned addresses, and dispatch entry at
- * either of the two interior instructions. */
-static bool is_lwz_cmpli_beq_poll(const PPCInst* insts, u32 count, u32 i) {
+ * either of the two interior instructions. The idle-selected provider may
+ * remove repeated loads only after the machine admits this RAM range as
+ * unchanged until the armed deadline, with EE enabled. It still charges
+ * complete iterations and preserves the exact branch continuation/state.
+ * Signed compare lowering is selected with idle skipping; reference builds
+ * retain their original signed instruction bodies. */
+static bool is_lwz_compare_beq_poll(const PPCInst* insts, u32 count, u32 i) {
     if (i + 3u >= count)
         return false; /* needs a real fallthrough label after the branch */
 
@@ -461,7 +466,8 @@ static bool is_lwz_cmpli_beq_poll(const PPCInst* insts, u32 count, u32 i) {
     const PPCInst* branch = &insts[i + 2u];
 
     return load->op == PPC_OP_LWZ && !load->embedded_data &&
-           cmp->op == PPC_OP_CMPLI && !cmp->embedded_data && cmp->l == 0u &&
+           (cmp->op == PPC_OP_CMPLI || cmp->op == PPC_OP_CMPI) &&
+           !cmp->embedded_data && cmp->l == 0u &&
            cmp->rA == load->rD &&
            branch->op == PPC_OP_BC && !branch->embedded_data && !branch->lk &&
            branch->bo == 12u && branch->bi == (u8)(cmp->crfD * 4u + 2u) &&
@@ -472,13 +478,14 @@ static bool is_lwz_cmpli_beq_poll(const PPCInst* insts, u32 count, u32 i) {
            (load->rA == 0u || load->rD != load->rA);
 }
 
-static void emit_lwz_cmpli_beq_poll(FILE* out, const PPCInst* load,
+static void emit_lwz_compare_beq_poll(FILE* out, const PPCInst* load,
                                     const PPCInst* cmp, const PPCInst* branch,
                                     u32 cycle_charge, u32 fallthrough) {
     const u32 cr_shift = 28u - (u32)cmp->crfD * 4u;
     const u32 cr_mask = 0xFu << cr_shift;
+    const u32 immediate=cmp->op==PPC_OP_CMPI?(u32)(s32)cmp->simm:cmp->uimm;
 
-    fprintf(out, "    /* Exact lwz/cmplwi/beq poll fast path (class peephole). */\n");
+    fprintf(out, "    /* Exact lwz/compare/beq poll fast path (class peephole). */\n");
     fprintf(out, "    if (dr_cycles < dr_deadline) {\n");
     fprintf(out, "        u32 dr_poll_ea = ");
     emit_dform_ea(out, load->rA, load->simm, false);
@@ -500,7 +507,14 @@ static void emit_lwz_cmpli_beq_poll(FILE* out, const PPCInst* load,
      * plain aligned load on x86 and avoids introducing a C data-race/hoist. */
     fprintf(out, "                dr_poll_value = bswap32(__atomic_load_n((const u32*)dr_poll_ptr, __ATOMIC_RELAXED));\n");
     fprintf(out, "                dr_cycles += %uu;\n", cycle_charge);
-    fprintf(out, "                if (dr_poll_value != 0x%04Xu) break;\n", cmp->uimm);
+    fprintf(out, "                if (dr_poll_value != 0x%08Xu) break;\n", immediate);
+    fprintf(out, "#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n");
+    fprintf(out, "                if (dr_cycles < dr_deadline && (ctx->msr & 0x8000u) && ppc_idle_can_skip(ctx,dr_poll_ea)) {\n");
+    fprintf(out, "                    const u64 dr_idle_steps=1u+(dr_deadline-dr_cycles-1u)/%uu;\n",cycle_charge);
+    fprintf(out, "                    if (dr_idle_steps <= (UINT64_MAX-dr_cycles)/%uu) {\n",cycle_charge);
+    fprintf(out, "                        const u64 dr_idle_cycles=dr_idle_steps*%uu;\n",cycle_charge);
+    fprintf(out, "                        dr_cycles+=dr_idle_cycles;ppc_idle_note_cycles(dr_idle_cycles);\n");
+    fprintf(out, "                    }\n                }\n#endif\n");
     fprintf(out, "                if (dr_cycles >= dr_deadline) {\n");
     fprintf(out, "                    ctx->gpr[%u] = dr_poll_value;\n", load->rD);
     fprintf(out, "                    ctx->cr = (ctx->cr & ~0x%08Xu) | ((0x2u | ((ctx->xer >> 31) & 1u)) << %uu);\n",
@@ -511,7 +525,10 @@ static void emit_lwz_cmpli_beq_poll(FILE* out, const PPCInst* load,
     fprintf(out, "            }\n");
     fprintf(out, "            ctx->gpr[%u] = dr_poll_value;\n", load->rD);
     fprintf(out, "            {\n");
-    fprintf(out, "                u32 dr_poll_cr = dr_poll_value < 0x%04Xu ? 0x8u : 0x4u;\n", cmp->uimm);
+    if(cmp->op==PPC_OP_CMPI)
+        fprintf(out,"                u32 dr_poll_cr = (dr_poll_value^0x80000000u) < (0x%08Xu^0x80000000u) ? 0x8u : 0x4u;\n",immediate);
+    else
+        fprintf(out,"                u32 dr_poll_cr = dr_poll_value < 0x%08Xu ? 0x8u : 0x4u;\n",immediate);
     fprintf(out, "                dr_poll_cr |= (ctx->xer >> 31) & 1u;\n");
     fprintf(out, "                ctx->cr = (ctx->cr & ~0x%08Xu) | (dr_poll_cr << %uu);\n",
             cr_mask, cr_shift);
@@ -792,6 +809,10 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         /* Exits publish accumulated cycles unconditionally. Deadline-driven
          * hosts opt into observation at bus/helper calls; reference builds
          * preserve the original exit-only contract. */
+        "#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n"
+        "extern bool ppc_idle_can_skip(CPUState*,u32);\n"
+        "extern void ppc_idle_note_cycles(u64);\n"
+        "#endif\n"
         "#define DR_RET() do { ctx->cycles = dr_cycles; return; } while (0)\n"
         "#if defined(DOLRECOMP_OBSERVE_CYCLES) && DOLRECOMP_OBSERVE_CYCLES\n"
         "#define DR_PUBLISH_CYCLES(value) (ctx->cycles = (value))\n"
@@ -3045,10 +3066,13 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * entries still land on their ordinary cmplwi/bc labels below, and
          * uniform mode (deadline==0) cannot enter it, preserving the pinned
          * uniform control-flow shape exactly. */
-        if (!s_relocatable && is_lwz_cmpli_beq_poll(insts, count, i)) {
-            emit_lwz_cmpli_beq_poll(out, &insts[i], &insts[i + 1u],
+        if (!s_relocatable && is_lwz_compare_beq_poll(insts, count, i)) {
+            if(insts[i+1u].op==PPC_OP_CMPI)
+                fprintf(out,"#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n");
+            emit_lwz_compare_beq_poll(out, &insts[i], &insts[i + 1u],
                                     &insts[i + 2u], cum[i + 2u],
                                     insts[i + 3u].address);
+            if(insts[i+1u].op==PPC_OP_CMPI)fprintf(out,"#endif\n");
         }
         /* Cycle cost is coalesced per basic block, charged at each exit
          * (return/goto emitted inside the instruction body, e.g. a taken

@@ -251,3 +251,15 @@ add_test(NAME poll_loop_exactness
         -DHOST_BUILD_CONFIG=$<CONFIG>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake
 )
+add_test(NAME idle_skip_exactness
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_poll_loop_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/idle_skip_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_poll_loop_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DENABLE_IDLE_SKIP=ON
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake
+)
