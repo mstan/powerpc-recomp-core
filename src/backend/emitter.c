@@ -199,7 +199,7 @@ static void emit_xform_ea(FILE* out, u8 ra, u8 rb, bool update) {
  * today). */
 
 static void emit_load_fast(FILE* out, const PPCInst* inst, u32 width,
-                           bool sign_extend, bool update) {
+                           bool sign_extend, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_read32_fast"
                     : width == 16 ? "dolrecomp_mem_read16_fast"
                     : "dolrecomp_mem_read8_fast";
@@ -208,11 +208,11 @@ static void emit_load_fast(FILE* out, const PPCInst* inst, u32 width,
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
     if (sign_extend) {
-        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, fn, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -221,7 +221,7 @@ static void emit_load_fast(FILE* out, const PPCInst* inst, u32 width,
 }
 
 static void emit_loadx_fast(FILE* out, const PPCInst* inst, u32 width,
-                            bool sign_extend, bool update) {
+                            bool sign_extend, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_read32_fast"
                     : width == 16 ? "dolrecomp_mem_read16_fast"
                     : "dolrecomp_mem_read8_fast";
@@ -230,11 +230,11 @@ static void emit_loadx_fast(FILE* out, const PPCInst* inst, u32 width,
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
     if (sign_extend) {
-        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, fn, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -242,7 +242,7 @@ static void emit_loadx_fast(FILE* out, const PPCInst* inst, u32 width,
     fprintf(out, "    }\n");
 }
 
-static void emit_store_fast(FILE* out, const PPCInst* inst, u32 width, bool update) {
+static void emit_store_fast(FILE* out, const PPCInst* inst, u32 width, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_write32_fast"
                     : width == 16 ? "dolrecomp_mem_write16_fast"
                     : "dolrecomp_mem_write8_fast";
@@ -251,15 +251,15 @@ static void emit_store_fast(FILE* out, const PPCInst* inst, u32 width, bool upda
     fprintf(out, "        u32 ea = ");
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
-    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s);\n",
-            fn, cast, inst->rS, emit_pc_literal(inst->address));
+    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s, dr_cycles + %uu);\n",
+            fn, cast, inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
     }
     fprintf(out, "    }\n");
 }
 
-static void emit_storex_fast(FILE* out, const PPCInst* inst, u32 width, bool update) {
+static void emit_storex_fast(FILE* out, const PPCInst* inst, u32 width, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_write32_fast"
                     : width == 16 ? "dolrecomp_mem_write16_fast"
                     : "dolrecomp_mem_write8_fast";
@@ -268,27 +268,27 @@ static void emit_storex_fast(FILE* out, const PPCInst* inst, u32 width, bool upd
     fprintf(out, "        u32 ea = ");
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
-    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s);\n",
-            fn, cast, inst->rS, emit_pc_literal(inst->address));
+    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s, dr_cycles + %uu);\n",
+            fn, cast, inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
     }
     fprintf(out, "    }\n");
 }
 
-static void emit_fload_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_fload_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s));\n",
-                emit_pc_literal(inst->address));
+        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                emit_pc_literal(inst->address), cycle_prefix);
         fprintf(out, "        ctx->fpr[%u] = value;\n", inst->rD);
         fprintf(out, "        ctx->ps1[%u] = value;\n", inst->rD);
     } else {
-        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s));\n",
-                inst->rD, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                inst->rD, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -296,19 +296,19 @@ static void emit_fload_fast(FILE* out, const PPCInst* inst, bool single, bool up
     fprintf(out, "    }\n");
 }
 
-static void emit_floadx_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_floadx_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s));\n",
-                emit_pc_literal(inst->address));
+        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                emit_pc_literal(inst->address), cycle_prefix);
         fprintf(out, "        ctx->fpr[%u] = value;\n", inst->rD);
         fprintf(out, "        ctx->ps1[%u] = value;\n", inst->rD);
     } else {
-        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s));\n",
-                inst->rD, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                inst->rD, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -316,17 +316,17 @@ static void emit_floadx_fast(FILE* out, const PPCInst* inst, bool single, bool u
     fprintf(out, "    }\n");
 }
 
-static void emit_fstore_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_fstore_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -334,17 +334,17 @@ static void emit_fstore_fast(FILE* out, const PPCInst* inst, bool single, bool u
     fprintf(out, "    }\n");
 }
 
-static void emit_fstorex_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_fstorex_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -789,14 +789,15 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "}\n"
         "#endif\n"
         "\n"
-        /* E1 (perf campaign 2): every emit_function body keeps ctx->cycles in
-         * a local (dr_cycles) for the whole invocation -- ctx->cycles is
-         * observed by nothing reachable from inside a chunk (verified:
-         * dispatch.c reads it only after the call returns; no MMIO handler or
-         * ppc_* helper touches it), so the ONLY places the memory field must
-         * be coherent are the function's exits. DR_RET() is that spill+return;
-         * every `return` emitted inside a chunk body goes through it. */
+        /* Exits publish accumulated cycles unconditionally. Deadline-driven
+         * hosts opt into observation at bus/helper calls; reference builds
+         * preserve the original exit-only contract. */
         "#define DR_RET() do { ctx->cycles = dr_cycles; return; } while (0)\n"
+        "#if defined(DOLRECOMP_OBSERVE_CYCLES) && DOLRECOMP_OBSERVE_CYCLES\n"
+        "#define DR_PUBLISH_CYCLES(value) (ctx->cycles = (value))\n"
+        "#else\n"
+        "#define DR_PUBLISH_CYCLES(value) ((void)0)\n"
+        "#endif\n"
         "\n"
         /* always_inline: Phase D2's --param budgets still left 391/1206 fast-
          * path call sites uninlined (gcc cold-call heuristics, documented in
@@ -905,43 +906,47 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         " * reservation-clear (lwarx/stwcx) on every RAM hit, not just the\n"
         " * slow path -- a plain store to a reserved line must still\n"
         " * invalidate the reservation. */\n"
-        "DR_MEM_INLINE u8 dolrecomp_mem_read8_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u8 dolrecomp_mem_read8_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea < GC_RAM_BASE + GC_MAIN_RAM_SIZE)\n"
         "        return ram[ea - GC_RAM_BASE];\n"
         "    if (ea >= GC_RAM_UNCACHED && ea < GC_RAM_UNCACHED + GC_MAIN_RAM_SIZE)\n"
         "        return ram[ea - GC_RAM_UNCACHED];\n"
         "    if (ea < GC_MAIN_RAM_SIZE)\n"
         "        return ram[ea];\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read8(ctx, ea, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE u16 dolrecomp_mem_read16_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u16 dolrecomp_mem_read16_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 2u))\n"
         "        return read_be16(ram + (ea - GC_RAM_BASE));\n"
         "    if (ea >= GC_RAM_UNCACHED && ea <= GC_RAM_UNCACHED + (GC_MAIN_RAM_SIZE - 2u))\n"
         "        return read_be16(ram + (ea - GC_RAM_UNCACHED));\n"
         "    if (ea <= GC_MAIN_RAM_SIZE - 2u)\n"
         "        return read_be16(ram + ea);\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read16(ctx, ea, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE u32 dolrecomp_mem_read32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u32 dolrecomp_mem_read32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 4u))\n"
         "        return read_be32(ram + (ea - GC_RAM_BASE));\n"
         "    if (ea >= GC_RAM_UNCACHED && ea <= GC_RAM_UNCACHED + (GC_MAIN_RAM_SIZE - 4u))\n"
         "        return read_be32(ram + (ea - GC_RAM_UNCACHED));\n"
         "    if (ea <= GC_MAIN_RAM_SIZE - 4u)\n"
         "        return read_be32(ram + ea);\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read32(ctx, ea, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE u64 dolrecomp_mem_read64_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u64 dolrecomp_mem_read64_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 8u))\n"
         "        return read_be64(ram + (ea - GC_RAM_BASE));\n"
         "    if (ea >= GC_RAM_UNCACHED && ea <= GC_RAM_UNCACHED + (GC_MAIN_RAM_SIZE - 8u))\n"
         "        return read_be64(ram + (ea - GC_RAM_UNCACHED));\n"
         "    if (ea <= GC_MAIN_RAM_SIZE - 8u)\n"
         "        return read_be64(ram + ea);\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read64(ctx, ea, cia);\n"
         "}\n"
         "\n"
@@ -979,7 +984,7 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        ctx->reserve_valid = false;\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write8_fast(CPUState* ctx, u8* const ram, u32 ea, u8 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write8_fast(CPUState* ctx, u8* const ram, u32 ea, u8 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea < GC_RAM_BASE + GC_MAIN_RAM_SIZE) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 1u, cia);\n"
@@ -998,10 +1003,11 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        ram[ea] = value;\n"
         "        return;\n"
         "    }\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write8(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write16_fast(CPUState* ctx, u8* const ram, u32 ea, u16 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write16_fast(CPUState* ctx, u8* const ram, u32 ea, u16 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 2u)) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 2u, cia);\n"
@@ -1020,10 +1026,11 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        write_be16(ram + ea, value);\n"
         "        return;\n"
         "    }\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write16(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 4u)) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 4u, cia);\n"
@@ -1042,10 +1049,11 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        write_be32(ram + ea, value);\n"
         "        return;\n"
         "    }\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write32(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write64_fast(CPUState* ctx, u8* const ram, u32 ea, u64 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write64_fast(CPUState* ctx, u8* const ram, u32 ea, u64 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 8u)) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 8u, cia);\n"
@@ -1064,6 +1072,7 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        write_be64(ram + ea, value);\n"
         "        return;\n"
         "    }\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write64(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
@@ -1082,11 +1091,11 @@ void emit_footer(FILE* out) {
 }
 
 /* FP-class instructions: everything that hardware refuses with the FP-
- * unavailable exception (vector 0x800) when MSR[FP]=0 — float loads/stores,
+ * unavailable exception (vector 0x800) when MSR[FP]=0 â€” float loads/stores,
  * FP arithmetic/moves/compares, FPSCR ops, every paired-single op, and the
  * quantized psq family. Gekko User's Manual 2.1.1/6.4.6.4: paired-single
  * and quantized ops are FP-class and take 0x800 before any HID2 program
- * check. The OS relies on this trap for lazy FPU context switching — an
+ * check. The OS relies on this trap for lazy FPU context switching â€” an
  * interrupt handler's first FP instruction must fault so the OS can save
  * the interrupted thread's FPU state. Without the gate, handler FP work
  * executes on the interrupted code's live registers (this exact bug drew
@@ -1136,6 +1145,43 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
     ppc_disasm(disasm, sizeof(disasm), inst);
     fprintf(out, "    // %08X: %s\n", inst->address, disasm);
 
+    /* Device helpers observe the pre-instruction cycle. Plain MEM1 hits
+     * keep it local; their inline helpers publish only on a bus miss. */
+    switch(inst->op) {
+    case PPC_OP_MFTB:
+    case PPC_OP_MFSPR:
+    case PPC_OP_MTSPR:
+    case PPC_OP_LWBRX:
+    case PPC_OP_LHBRX:
+    case PPC_OP_STWBRX:
+    case PPC_OP_STHBRX:
+    case PPC_OP_LSWI:
+    case PPC_OP_LSWX:
+    case PPC_OP_STSWI:
+    case PPC_OP_STSWX:
+    case PPC_OP_LWARX:
+    case PPC_OP_STWCX:
+    case PPC_OP_STFIWX:
+    case PPC_OP_DCBZ:
+    case PPC_OP_DCBZ_L:
+    case PPC_OP_LMW:
+    case PPC_OP_STMW:
+    case PPC_OP_ECIWX:
+    case PPC_OP_ECOWX:
+    case PPC_OP_PSQ_L:
+    case PPC_OP_PSQ_LU:
+    case PPC_OP_PSQ_LX:
+    case PPC_OP_PSQ_LUX:
+    case PPC_OP_PSQ_ST:
+    case PPC_OP_PSQ_STU:
+    case PPC_OP_PSQ_STX:
+    case PPC_OP_PSQ_STUX:
+        fprintf(out,"    DR_PUBLISH_CYCLES(dr_cycles + %uu);\n",
+                cycle_charge-dr_ppc_num_cycles(inst->op));
+        break;
+    default:break;
+    }
+
     unsigned reloc = s_relocatable ? relocation_kind(inst->address) : 0;
     s_live_immediate = reloc == 4 || reloc == 6;
     if (reloc == 10) {
@@ -1171,7 +1217,7 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
     }
 
     /* Lazy-FPU trap (see ppc_op_is_fp above). SRR0 = this instruction so it
-     * re-executes after the OS handler enables FP and rfi's — the exact
+     * re-executes after the OS handler enables FP and rfi's â€” the exact
      * hardware restart semantic the lazy context switch depends on. The
      * helper takes cia explicitly and the dispatcher resumes at the vector,
      * so no ctx->pc pre-stamp is needed (same reasoning as the Phase B/C
@@ -2056,23 +2102,23 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
         emit_fcompare(out, inst);
         break;
 
-    case PPC_OP_LWZ:  emit_load_fast(out, inst, 32, false, false); break;
-    case PPC_OP_LWZU: emit_load_fast(out, inst, 32, false, true); break;
-    case PPC_OP_LBZ:  emit_load_fast(out, inst, 8,  false, false); break;
-    case PPC_OP_LBZU: emit_load_fast(out, inst, 8,  false, true); break;
-    case PPC_OP_LHZ:  emit_load_fast(out, inst, 16, false, false); break;
-    case PPC_OP_LHZU: emit_load_fast(out, inst, 16, false, true); break;
-    case PPC_OP_LHA:  emit_load_fast(out, inst, 16, true,  false); break;
-    case PPC_OP_LHAU: emit_load_fast(out, inst, 16, true,  true); break;
+    case PPC_OP_LWZ:  emit_load_fast(out, inst, 32, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LWZU: emit_load_fast(out, inst, 32, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZ:  emit_load_fast(out, inst, 8,  false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZU: emit_load_fast(out, inst, 8,  false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZ:  emit_load_fast(out, inst, 16, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZU: emit_load_fast(out, inst, 16, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHA:  emit_load_fast(out, inst, 16, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHAU: emit_load_fast(out, inst, 16, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_LWZX:  emit_loadx_fast(out, inst, 32, false, false); break;
-    case PPC_OP_LWZUX: emit_loadx_fast(out, inst, 32, false, true); break;
-    case PPC_OP_LBZX:  emit_loadx_fast(out, inst, 8,  false, false); break;
-    case PPC_OP_LBZUX: emit_loadx_fast(out, inst, 8,  false, true); break;
-    case PPC_OP_LHZX:  emit_loadx_fast(out, inst, 16, false, false); break;
-    case PPC_OP_LHZUX: emit_loadx_fast(out, inst, 16, false, true); break;
-    case PPC_OP_LHAX:  emit_loadx_fast(out, inst, 16, true,  false); break;
-    case PPC_OP_LHAUX: emit_loadx_fast(out, inst, 16, true,  true); break;
+    case PPC_OP_LWZX:  emit_loadx_fast(out, inst, 32, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LWZUX: emit_loadx_fast(out, inst, 32, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZX:  emit_loadx_fast(out, inst, 8,  false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZUX: emit_loadx_fast(out, inst, 8,  false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZX:  emit_loadx_fast(out, inst, 16, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZUX: emit_loadx_fast(out, inst, 16, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHAX:  emit_loadx_fast(out, inst, 16, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHAUX: emit_loadx_fast(out, inst, 16, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
     /* Phase C: byte-reversed loads stay an unconditional slow call (not part
      * of the "plain" inlined class) but still gain cia; their mem_read* call
@@ -2097,44 +2143,44 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
         fprintf(out, "    }\n");
         break;
 
-    case PPC_OP_LFS:   emit_fload_fast(out, inst, true,  false); break;
-    case PPC_OP_LFSU:  emit_fload_fast(out, inst, true,  true); break;
-    case PPC_OP_LFD:   emit_fload_fast(out, inst, false, false); break;
-    case PPC_OP_LFDU:  emit_fload_fast(out, inst, false, true); break;
+    case PPC_OP_LFS:   emit_fload_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFSU:  emit_fload_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFD:   emit_fload_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFDU:  emit_fload_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_LFSX:  emit_floadx_fast(out, inst, true,  false); break;
-    case PPC_OP_LFSUX: emit_floadx_fast(out, inst, true,  true); break;
-    case PPC_OP_LFDX:  emit_floadx_fast(out, inst, false, false); break;
-    case PPC_OP_LFDUX: emit_floadx_fast(out, inst, false, true); break;
+    case PPC_OP_LFSX:  emit_floadx_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFSUX: emit_floadx_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFDX:  emit_floadx_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFDUX: emit_floadx_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
     case PPC_OP_PSQ_L:   emit_psq_load(out, inst, false, false, cycle_charge); break;
     case PPC_OP_PSQ_LU:  emit_psq_load(out, inst, false, true, cycle_charge); break;
     case PPC_OP_PSQ_LX:  emit_psq_load(out, inst, true,  false, cycle_charge); break;
     case PPC_OP_PSQ_LUX: emit_psq_load(out, inst, true,  true, cycle_charge); break;
 
-    case PPC_OP_STW:  emit_store_fast(out, inst, 32, false); break;
-    case PPC_OP_STWU: emit_store_fast(out, inst, 32, true); break;
-    case PPC_OP_STB:  emit_store_fast(out, inst, 8,  false); break;
-    case PPC_OP_STBU: emit_store_fast(out, inst, 8,  true); break;
-    case PPC_OP_STH:  emit_store_fast(out, inst, 16, false); break;
-    case PPC_OP_STHU: emit_store_fast(out, inst, 16, true); break;
+    case PPC_OP_STW:  emit_store_fast(out, inst, 32, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STWU: emit_store_fast(out, inst, 32, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STB:  emit_store_fast(out, inst, 8,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STBU: emit_store_fast(out, inst, 8,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STH:  emit_store_fast(out, inst, 16, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STHU: emit_store_fast(out, inst, 16, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_STWX:  emit_storex_fast(out, inst, 32, false); break;
-    case PPC_OP_STWUX: emit_storex_fast(out, inst, 32, true); break;
-    case PPC_OP_STBX:  emit_storex_fast(out, inst, 8,  false); break;
-    case PPC_OP_STBUX: emit_storex_fast(out, inst, 8,  true); break;
-    case PPC_OP_STHX:  emit_storex_fast(out, inst, 16, false); break;
-    case PPC_OP_STHUX: emit_storex_fast(out, inst, 16, true); break;
+    case PPC_OP_STWX:  emit_storex_fast(out, inst, 32, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STWUX: emit_storex_fast(out, inst, 32, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STBX:  emit_storex_fast(out, inst, 8,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STBUX: emit_storex_fast(out, inst, 8,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STHX:  emit_storex_fast(out, inst, 16, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STHUX: emit_storex_fast(out, inst, 16, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_STFS:   emit_fstore_fast(out, inst, true,  false); break;
-    case PPC_OP_STFSU:  emit_fstore_fast(out, inst, true,  true); break;
-    case PPC_OP_STFD:   emit_fstore_fast(out, inst, false, false); break;
-    case PPC_OP_STFDU:  emit_fstore_fast(out, inst, false, true); break;
+    case PPC_OP_STFS:   emit_fstore_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFSU:  emit_fstore_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFD:   emit_fstore_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFDU:  emit_fstore_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_STFSX:  emit_fstorex_fast(out, inst, true,  false); break;
-    case PPC_OP_STFSUX: emit_fstorex_fast(out, inst, true,  true); break;
-    case PPC_OP_STFDX:  emit_fstorex_fast(out, inst, false, false); break;
-    case PPC_OP_STFDUX: emit_fstorex_fast(out, inst, false, true); break;
+    case PPC_OP_STFSX:  emit_fstorex_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFSUX: emit_fstorex_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFDX:  emit_fstorex_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFDUX: emit_fstorex_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
     case PPC_OP_PSQ_ST:   emit_psq_store(out, inst, false, false, cycle_charge); break;
     case PPC_OP_PSQ_STU:  emit_psq_store(out, inst, false, true, cycle_charge); break;
@@ -2949,7 +2995,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
      * reads it only after we return; no MMIO handler or ppc_* helper touches
      * it), so DR_RET() spilling at every exit is the complete coherence
      * contract. cycle_deadline is armed by the dispatch loop before every
-     * call and never written inside a chunk — const. The (void) uses keep
+     * call and never written inside a chunk â€” const. The (void) uses keep
      * chunks with no memory ops warning-clean. */
     fprintf(out, "    u8* const dr_ram = ctx->ram;\n");
     fprintf(out, "    u64 dr_cycles = ctx->cycles;\n");
@@ -3013,7 +3059,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * entry above already retroactively adjusts for mid-block entry, so
          * the charge below (cum[i], the block-leader..here inclusive sum)
          * is exact regardless of where execution actually entered. Cost
-         * values are Dolphin's own oracle timing model — see ppc_cycles.c. */
+         * values are Dolphin's own oracle timing model â€” see ppc_cycles.c. */
         emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i]);
 
         if (block_ends_here && !ppc_op_always_exits(insts[i].op)) {
@@ -3028,7 +3074,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     }
 
     fprintf(out, "    ctx->pc = %s;\n", emit_pc_literal(func_end));
-    /* Falling off the chunk's end is an exit like any other — spill the
+    /* Falling off the chunk's end is an exit like any other â€” spill the
      * cycles local (DR_RET()'s job everywhere else). */
     fprintf(out, "    ctx->cycles = dr_cycles;\n");
     fprintf(out, "}\n\n");

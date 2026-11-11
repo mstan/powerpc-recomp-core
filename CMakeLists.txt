@@ -206,6 +206,12 @@ target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
 
+add_executable(test_cycle_observation tests/test_cycle_observation.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_cycle_observation PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
+target_include_directories(test_cycle_observation PRIVATE ${DOLRECOMP_SRC})
+target_link_libraries(test_cycle_observation PRIVATE dr_cpu)
+add_test(NAME cycle_observation COMMAND test_cycle_observation)
+
 # Phase D2 (codegen speed campaign): real link+execute exactness proof for
 # the in-chunk bl/blr shadow-call-stack fast path (emitter.c's
 # emit_direct_branch lk-branch push / emit_dynamic_branch is_blr_class pop).

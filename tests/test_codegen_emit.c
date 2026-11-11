@@ -181,6 +181,16 @@ int main(int argc, char** argv) {
     paired_overlap[3] = ppc_decode(0x4E800020u, BASE+0x108C);
     emit_function(out, paired_overlap, 4, BASE+0x1080);
 
+    /* Time-observing memory fixture: one native block, two device accesses,
+     * and a mid-block re-entry. The bus sees the instruction's cycle cursor. */
+    PPCInst timed[5];
+    timed[0]=ppc_decode(0x38630001u,BASE+0x1100); /* addi r3,r3,1 */
+    timed[1]=ppc_decode(0x80850000u,BASE+0x1104); /* lwz r4,0(r5) */
+    timed[2]=ppc_decode(0x38630001u,BASE+0x1108);
+    timed[3]=ppc_decode(0x90850004u,BASE+0x110c); /* stw r4,4(r5) */
+    timed[4]=ppc_decode(0x4e800020u,BASE+0x1110);
+    emit_function(out,timed,5,BASE+0x1100);
+
     FunctionList funcs = {0};
     if (!function_list_add(&funcs, BASE, BASE + (u32)count * 4u) ||
         !function_list_add(&funcs, BASE + 0x1000, BASE + 0x100C) ||
