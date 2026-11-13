@@ -29,11 +29,75 @@ void func_80004060(CPUState* ctx);
 void func_80004068(CPUState* ctx);
 void func_80004070(CPUState* ctx);
 void func_80004080(CPUState* ctx);
+void func_80004200(CPUState* ctx);
+void func_80004240(CPUState* ctx);
+void func_80004260(CPUState* ctx);
+void func_80004280(CPUState* ctx);
+void func_800042A0(CPUState* ctx);
 
 static u64 bits_of(f64 value) {
     u64 bits;
     memcpy(&bits, &value, sizeof(bits));
     return bits;
+}
+
+static u32 fp_bus_reads;static u64 fp_bus_cycles;
+static u64 fp_bus_disable(CPUState* cpu,u32 address,u32 size) {
+    if(address!=0xcc000000u || size!=4)return 0;
+    ++fp_bus_reads;fp_bus_cycles=cpu->cycles;cpu->msr=0;return 0x11223344u;
+}
+static void fp_start(CPUState* cpu,u32 pc,u32 msr) {
+    cpu->pc=pc;cpu->msr=msr;cpu->cycles=100;cpu->cycle_deadline=1000000;
+    cpu->exception=0;cpu->fpscr=0;cpu->srr0=cpu->srr1=0xdeadbeefu;
+    cpu->lr=0x81234564u;cpu->hid2=0;
+    cpu->fpr[1]=1.25;cpu->fpr[2]=2.5;
+    for(unsigned n=3;n<=6;++n)cpu->fpr[n]=cpu->ps1[n]=9;
+    cpu->external_read=NULL;cpu->gpr[5]=0;
+}
+static int fp_scope_contract(CPUState* cpu) {
+    fp_start(cpu,0x80004200u,0x2000u);func_80004200(cpu);
+    if(cpu->pc!=cpu->lr || cpu->cycles!=105 || cpu->exception ||
+       cpu->fpr[3]!=3.75 || cpu->fpr[4]!=3.125 || cpu->fpr[5]!=6.875 || cpu->fpr[6]!=-6.875)return 0;
+    for(unsigned n=0;n<4;++n) {
+        const u32 cia=0x80004200u+n*4;
+        fp_start(cpu,cia,0);func_80004200(cpu);
+        if(cpu->exception!=PPC_EXC_FP_UNAVAILABLE || cpu->srr0!=cia ||
+           cpu->pc!=PPC_VECTOR_FP_UNAVAIL || cpu->cycles!=101 || cpu->fpr[6]!=9)return 0;
+    }
+    const f64 resumed_result[]={-6.875,-12.125,-18,-9};
+    for(unsigned n=0;n<4;++n) {
+        fp_start(cpu,0x80004200u+n*4,0x2000u);func_80004200(cpu);
+        if(cpu->exception || cpu->pc!=cpu->lr || cpu->cycles!=105-n || cpu->fpr[6]!=resumed_result[n])return 0;
+    }
+    fp_start(cpu,0x80004240u,0x2000u);func_80004240(cpu);
+    if(cpu->exception!=PPC_EXC_FP_UNAVAILABLE || cpu->srr0!=0x80004248u ||
+       cpu->cycles!=103 || cpu->fpr[3]!=3.75 || cpu->fpr[6]!=9)return 0;
+    fp_start(cpu,0x80004260u,0x2000u);cpu->external_read=fp_bus_disable;
+    cpu->gpr[5]=0xcc000000u;fp_bus_reads=0;func_80004260(cpu);
+    if(cpu->exception!=PPC_EXC_FP_UNAVAILABLE || cpu->srr0!=0x80004268u ||
+       cpu->cycles!=103 || cpu->gpr[4]!=0x11223344u || fp_bus_reads!=1 || cpu->fpr[6]!=9)return 0;
+#if defined(DOLRECOMP_OBSERVE_CYCLES) && DOLRECOMP_OBSERVE_CYCLES
+    if(fp_bus_cycles!=101)return 0;
+#else
+    if(fp_bus_cycles!=100)return 0;
+#endif
+    fp_start(cpu,0x80004280u,0x2000u);func_80004280(cpu);
+    if(cpu->exception!=PPC_EXC_PROGRAM || cpu->srr0!=0x80004284u ||
+       cpu->cycles!=102 || cpu->fpr[6]!=9)return 0;
+    /* FP unavailable still outranks the PSQ HID2 program fault on an interior
+     * dispatch entry, even though normal fallthrough inherits the FP proof. */
+    fp_start(cpu,0x80004284u,0);func_80004280(cpu);
+    if(cpu->exception!=PPC_EXC_FP_UNAVAILABLE || cpu->srr0!=0x80004284u ||cpu->cycles!=101)return 0;
+    for(unsigned deadline=0;deadline<2;++deadline) {
+        fp_start(cpu,0x800042a0u,0x2000u);cpu->cycle_deadline=deadline?101:1000000;
+        unsigned calls=0;
+        while(!cpu->exception && calls++<8)func_800042A0(cpu);
+        if(cpu->exception!=PPC_EXC_FP_UNAVAILABLE || cpu->srr0!=0x800042a8u ||
+           cpu->cycles!=105 || cpu->fpr[6]!=9)return 0;
+    }
+    cpu->external_read=NULL;
+    puts("FP guard exactness: arbitrary entry, MSR/bus changes, exception priority, shadow calls and deadlines passed");
+    return 1;
 }
 
 int main(void) {
@@ -130,6 +194,9 @@ int main(void) {
     if (!overlap_ok)
         fprintf(stderr, "paired overlap sum=%g,%g mul=%g,%g madd=%g,%g\n",
                 cpu.fpr[1],cpu.ps1[1],cpu.fpr[4],cpu.ps1[4],cpu.fpr[6],cpu.ps1[6]);
+    const int fp_scope_ok=fp_scope_contract(&cpu);
+    if(!fp_scope_ok)fprintf(stderr,"FP scope pc=%08X srr0=%08X exception=%x cycles=%llu\n",
+        cpu.pc,cpu.srr0,cpu.exception,(unsigned long long)cpu.cycles);
     cpu_free(&cpu);
-    return !(integer_ok && memory_ok && compare_ok && record_ok && merge_ok && overlap_ok);
+    return !(integer_ok && memory_ok && compare_ok && record_ok && merge_ok && overlap_ok && fp_scope_ok);
 }

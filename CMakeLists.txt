@@ -206,6 +206,14 @@ target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
 
+# Same generated instructions and expected architectural results, with the
+# optional FP guard scope and cycle-observation boundary both enabled.
+add_executable(test_c_execute_fp_scope tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_include_directories(test_c_execute_fp_scope PRIVATE ${DOLRECOMP_SRC})
+target_compile_definitions(test_c_execute_fp_scope PRIVATE DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_c_execute_fp_scope PRIVATE dr_cpu)
+add_test(NAME c_execute_fp_scope COMMAND test_c_execute_fp_scope)
+
 add_executable(test_cycle_observation tests/test_cycle_observation.c ${DOLRECOMP_C_TEST_SOURCE})
 target_compile_definitions(test_cycle_observation PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
 target_include_directories(test_cycle_observation PRIVATE ${DOLRECOMP_SRC})

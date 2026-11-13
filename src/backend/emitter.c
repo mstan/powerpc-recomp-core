@@ -781,6 +781,9 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
          * the round trip. Sized generously above realistic non-recursive IPL
          * call depth while staying tiny (<1KB) per chunk-function stack frame. */
         "#define DOLRECOMP_BL_SHADOW_DEPTH 32\n"
+        "#ifndef DOLRECOMP_FP_GUARD_SCOPE\n"
+        "#define DOLRECOMP_FP_GUARD_SCOPE 0\n"
+        "#endif\n"
         "\n"
         "#include <string.h>\n"
         "#include <math.h>\n"
@@ -1159,9 +1162,48 @@ static bool ppc_op_is_fp(PPCOpcode op) {
     }
 }
 
+/* Closed proof set: these helpers/inline operations touch only FP/FPSCR/CR
+ * state, never MSR or a bus/host callback. Memory, MSR writes, branches and
+ * unknown operations end the span. New opcodes require an explicit audit. */
+static bool fp_scope_preserved(PPCOpcode op) {
+    switch(op) {
+    case PPC_OP_FADDS: case PPC_OP_FSUBS: case PPC_OP_FMULS: case PPC_OP_FDIVS:
+    case PPC_OP_FRES: case PPC_OP_FMADDS: case PPC_OP_FMSUBS:
+    case PPC_OP_FNMADDS: case PPC_OP_FNMSUBS:
+    case PPC_OP_FADD: case PPC_OP_FSUB: case PPC_OP_FMUL: case PPC_OP_FDIV:
+    case PPC_OP_FRSQRTE: case PPC_OP_FMADD: case PPC_OP_FMSUB:
+    case PPC_OP_FNMADD: case PPC_OP_FNMSUB:
+    case PPC_OP_FCTIW: case PPC_OP_FCTIWZ: case PPC_OP_FRSP: case PPC_OP_FSEL:
+    case PPC_OP_FMR: case PPC_OP_FNEG: case PPC_OP_FABS: case PPC_OP_FNABS:
+    case PPC_OP_FCMPU: case PPC_OP_FCMPO:
+    case PPC_OP_MTFSB0: case PPC_OP_MTFSB1: case PPC_OP_MCRFS:
+    case PPC_OP_MFFS: case PPC_OP_MTFSF: case PPC_OP_MTFSFI:
+    case PPC_OP_PS_ADD: case PPC_OP_PS_SUB: case PPC_OP_PS_MUL:
+    case PPC_OP_PS_DIV: case PPC_OP_PS_RES: case PPC_OP_PS_RSQRTE:
+    case PPC_OP_PS_MADD: case PPC_OP_PS_MSUB: case PPC_OP_PS_NMADD:
+    case PPC_OP_PS_NMSUB: case PPC_OP_PS_NEG: case PPC_OP_PS_ABS:
+    case PPC_OP_PS_NABS: case PPC_OP_PS_MR:
+    case PPC_OP_PS_SUM0: case PPC_OP_PS_SUM1:
+    case PPC_OP_PS_MULS0: case PPC_OP_PS_MULS1:
+    case PPC_OP_PS_MADDS0: case PPC_OP_PS_MADDS1:
+    case PPC_OP_PS_MERGE00: case PPC_OP_PS_MERGE01:
+    case PPC_OP_PS_MERGE10: case PPC_OP_PS_MERGE11:
+    case PPC_OP_PS_CMPU0: case PPC_OP_PS_CMPO0:
+    case PPC_OP_PS_CMPU1: case PPC_OP_PS_CMPO1: case PPC_OP_PS_SEL:
+        return true;
+    default:return false;
+    }
+}
+static void emit_fp_guard(FILE* out,u32 address,u32 charge) {
+    fprintf(out,"    if (!(ctx->msr & 0x2000u)) {\n");
+    fprintf(out,"        ppc_fp_unavailable(ctx, %s);\n",emit_pc_literal(address));
+    fprintf(out,"        dr_cycles += %uu; DR_RET();\n",charge);
+    fprintf(out,"    }\n");
+}
+
 static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
                                         u32 func_start, u32 func_end,
-                                        u32 cycle_charge) {
+                                        u32 cycle_charge,bool fp_proven) {
     char disasm[64];
     ppc_disasm(disasm, sizeof(disasm), inst);
     fprintf(out, "    // %08X: %s\n", inst->address, disasm);
@@ -1244,10 +1286,9 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
      * so no ctx->pc pre-stamp is needed (same reasoning as the Phase B/C
      * pc-pure whitelist). */
     if (ppc_op_is_fp(inst->op)) {
-        fprintf(out, "    if (!(ctx->msr & 0x2000u)) {\n");
-        fprintf(out, "        ppc_fp_unavailable(ctx, %s);\n", emit_pc_literal(inst->address));
-        fprintf(out, "        dr_cycles += %uu; DR_RET();\n", cycle_charge);
-        fprintf(out, "    }\n");
+        if(fp_proven)fprintf(out,"#if !DOLRECOMP_FP_GUARD_SCOPE\n");
+        emit_fp_guard(out,inst->address,cycle_charge);
+        if(fp_proven)fprintf(out,"#endif\n");
     }
 
     switch (inst->op) {
@@ -2569,7 +2610,7 @@ void emit_instruction(FILE* out, const PPCInst* inst) {
      * context (no switch-dispatch entry compensation, no block-exit flush --
      * see emit_function for that machinery), so this instruction is its own
      * one-instruction "block": charge exactly its own cost at any exit. */
-    emit_instruction_with_range(out, inst, 0, (u32)-1, dr_ppc_num_cycles(inst->op));
+    emit_instruction_with_range(out, inst, 0, (u32)-1, dr_ppc_num_cycles(inst->op),false);
 }
 
 /* A "branch" for basic-block boundary purposes: any instruction that can
@@ -2972,18 +3013,29 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     u32 i;
     u32 func_end = func_addr + count * 4u;
     bool* is_leader = NULL;
+    bool* fp_proven = NULL;
     u32* cum = NULL;
 
     if (count > 0) {
         is_leader = (bool*)malloc(count * sizeof(bool));
+        fp_proven = (bool*)malloc(count * sizeof(bool));
         cum = (u32*)malloc(count * sizeof(u32));
-        if (!is_leader || !cum) {
+        if (!is_leader || !cum || !fp_proven) {
             fprintf(stderr, "error: out of memory computing block cycle costs\n");
             free(is_leader);
             free(cum);
+            free(fp_proven);
             exit(1);
         }
         compute_block_costs(insts, count, func_addr, func_end, is_leader, cum);
+        bool proof=false;
+        for(i=0;i<count;++i) {
+            if(is_leader[i])proof=false;
+            /* Relocated operands call back into the owner before the original
+             * gate. Keep that path unchanged rather than assume its purity. */
+            fp_proven[i]=!s_relocatable && proof && !insts[i].embedded_data && ppc_op_is_fp(insts[i].op);
+            proof=!s_relocatable && !insts[i].embedded_data && fp_scope_preserved(insts[i].op);
+        }
     }
 
     fprintf(out, "void func_%08X%s(CPUState* ctx) {\n", func_addr,
@@ -3031,7 +3083,16 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * that assumed it started at the leader. Leaders (PREFIX == 0) skip
          * the subtraction; it would be a no-op anyway. */
         u32 prefix = cum[i] - dr_ppc_num_cycles(insts[i].op);
-        if (prefix != 0) {
+        if(fp_proven[i]) {
+            /* Cold arbitrary-PC entry cannot inherit the fallthrough proof.
+             * Its original prefix compensation and faulting CIA remain exact.
+             * Local branch targets are leaders and keep their body guard. */
+            fprintf(out,"    case 0x%08Xu:\n",insts[i].address);
+            if(prefix)fprintf(out,"        dr_cycles -= %uu;\n",prefix);
+            fprintf(out,"#if DOLRECOMP_FP_GUARD_SCOPE\n");
+            emit_fp_guard(out,insts[i].address,cum[i]);
+            fprintf(out,"#endif\n        goto label_%08X;\n",insts[i].address);
+        } else if (prefix != 0) {
             fprintf(out, "    case 0x%08Xu: dr_cycles -= %uu; goto label_%08X;\n",
                     insts[i].address, prefix, insts[i].address);
         } else {
@@ -3084,7 +3145,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * the charge below (cum[i], the block-leader..here inclusive sum)
          * is exact regardless of where execution actually entered. Cost
          * values are Dolphin's own oracle timing model â€” see ppc_cycles.c. */
-        emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i]);
+        emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i],fp_proven[i]);
 
         if (block_ends_here && !ppc_op_always_exits(insts[i].op)) {
             /* This instruction can fall through (on at least one path) into
@@ -3105,4 +3166,5 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
 
     free(is_leader);
     free(cum);
+    free(fp_proven);
 }

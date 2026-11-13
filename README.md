@@ -33,6 +33,14 @@ The 16-test suite covers decoding, containers, dispatch, floating-point
 semantics and emitted-code compilation/execution. Firmware, games, generated
 guest code and native saves are not included.
 
+An experimental, default-off `DOLRECOMP_FP_GUARD_SCOPE=1` definition for generated
+C shares the FP-availability gate across audited FP arithmetic/move spans.
+Interior dispatch entries retain their own exact fault gate; memory, MSR,
+branch and unknown boundaries end the proof. Relocated emission keeps its
+original gates. Regenerate through the normal compiler before selecting this
+flag. The default path remains the reference; generated shape alone does not
+establish a title performance improvement.
+
 ## License and upstream
 
 Imported copyright notices and the [GPL license](LICENSE) are preserved.
