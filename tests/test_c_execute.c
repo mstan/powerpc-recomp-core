@@ -42,7 +42,7 @@ static u64 bits_of(f64 value) {
 }
 
 static u32 fp_bus_reads;static u64 fp_bus_cycles;
-static u64 fp_bus_disable(CPUState* cpu,u32 address,u32 size) {
+static u64 fp_bus_disable(CPUState* cpu,u32 address,u8 size) {
     if(address!=0xcc000000u || size!=4)return 0;
     ++fp_bus_reads;fp_bus_cycles=cpu->cycles;cpu->msr=0;return 0x11223344u;
 }
