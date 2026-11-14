@@ -23,6 +23,13 @@ int emit_load_relocation_words(const char* path);
 // emit a single recompiled function as C code
 void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr);
 
+/* Emit one caller-verified original function, not an enlarged chunk window.
+ * Its direct external calls remain native exits. The generated bool
+ * func_ADDRESS_unit(CPUState*, const DrFunctionUnitOwner*) is default-off and
+ * declines arbitrary interior PCs to the consumer's original native catalog.
+ * Returns zero without output for unsupported/invalid function shapes. */
+int emit_function_unit(FILE* out, const PPCInst* insts, u32 count, u32 func_addr);
+
 // emit a single instruction as C code
 void emit_instruction(FILE* out, const PPCInst* inst);
 

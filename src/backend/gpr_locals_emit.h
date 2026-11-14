@@ -117,6 +117,7 @@ static u32 gpr_locals_written(const PPCInst* inst) {
  * locals live. Publication is explicit, including every generated exit. */
 static void emit_gpr_header(FILE* out) {
     fputs("#define DOLRECOMP_GPR_LOCALS_ABI 1\n#ifndef DOLRECOMP_GPR_LOCALS\n#define DOLRECOMP_GPR_LOCALS 0\n#endif\n",out);
+    fputs("#include \"cpu/function_unit.h\"\n",out);
     fputs("#if DOLRECOMP_GPR_LOCALS\nDR_MEM_INLINE void dr_gpr_publish(CPUState* ctx,const u32* r,u32 mask) {\n",out);
     for(unsigned n=0;n<32;++n)fprintf(out,"    if(mask & (1u<<%u)) ctx->gpr[%u]=r[%u];\n",n,n,n);
     fputs("}\nDR_MEM_INLINE void dr_gpr_reload(CPUState* ctx,u32* r) {\n",out);

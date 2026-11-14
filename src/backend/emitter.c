@@ -3356,3 +3356,5 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
         fprintf(out,"#endif\n/* DOLRECOMP_NATIVE_COMPAT_END */\n\n");
     }
 }
+
+#include "function_unit_emit.h"

@@ -58,6 +58,9 @@ target_include_directories(dr_native_chain SYSTEM PUBLIC ${DOLRECOMP_SRC})
 # Header-selected hot-entry specialization; no host descriptor or CPU ABI.
 add_library(dr_gpr_locals INTERFACE)
 target_compile_definitions(dr_gpr_locals INTERFACE DOLRECOMP_GPR_LOCALS=1)
+add_library(dr_function_unit INTERFACE)
+target_compile_definitions(dr_function_unit INTERFACE DOLRECOMP_FUNCTION_UNIT=1)
+target_include_directories(dr_function_unit SYSTEM INTERFACE ${DOLRECOMP_SRC})
 
 add_library(dr_block_entry INTERFACE)
 target_compile_definitions(dr_block_entry INTERFACE DOLRECOMP_BLOCK_ENTRY=1)
@@ -231,6 +234,31 @@ add_executable(test_c_execute
 target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
+
+add_executable(test_function_unit_gen tests/test_function_unit_gen.c)
+target_link_libraries(test_function_unit_gen PRIVATE dr_backend)
+add_executable(dolrecomp-function-unit tools/emit_function_unit.c)
+target_link_libraries(dolrecomp-function-unit PRIVATE dr_backend)
+set(DOLRECOMP_FUNCTION_TEST_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/function_unit_generated.c)
+add_custom_command(OUTPUT ${DOLRECOMP_FUNCTION_TEST_SOURCE}
+    COMMAND test_function_unit_gen ${DOLRECOMP_FUNCTION_TEST_SOURCE}
+    DEPENDS test_function_unit_gen VERBATIM)
+foreach(_function_mode reference enabled compat inline)
+  add_executable(test_function_unit_${_function_mode}
+    tests/test_function_unit.c ${DOLRECOMP_FUNCTION_TEST_SOURCE})
+  target_link_libraries(test_function_unit_${_function_mode} PRIVATE dr_cpu)
+  target_compile_definitions(test_function_unit_${_function_mode} PRIVATE
+    DOLRECOMP_OBSERVE_CYCLES=1 FUNCTION_UNIT_TEST_UNOBSERVED_STORE=1)
+  if(NOT _function_mode STREQUAL "reference")
+    target_link_libraries(test_function_unit_${_function_mode} PRIVATE dr_function_unit)
+  endif()
+  if(_function_mode STREQUAL "compat")
+    target_compile_definitions(test_function_unit_${_function_mode} PRIVATE DOLRECOMP_BLOCK_ENTRY_COMPAT=1)
+  elseif(_function_mode STREQUAL "inline")
+    target_link_libraries(test_function_unit_${_function_mode} PRIVATE dr_fp_inline)
+  endif()
+  add_test(NAME function_unit_${_function_mode} COMMAND test_function_unit_${_function_mode})
+endforeach()
 
 # Same emitted instruction/FP/arbitrary-entry fixture through the block-only
 # hot body and through the forced native compatibility page contract.
