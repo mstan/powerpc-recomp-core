@@ -213,6 +213,17 @@ int main(int argc, char** argv) {
         emit_function(out,fp,fp_counts[n],fp_addresses[n]);
     }
 
+    /* Each width has a normal and arbitrary interior entry, with a pure
+     * prefix making bus-observation cycles distinguishable from entry time. */
+    const u32 mem2_words[]={0x88640000u,0xa0640000u,0x80640000u,0xc8640000u,
+                           0x98640000u,0xb0640000u,0x90640000u,0xd8640000u};
+    for(unsigned n=0;n<8;++n) {
+        const u32 pc=0x80004400u+n*0x20u;
+        PPCInst memory[3]={ppc_decode(0x38c60001u,pc),
+            ppc_decode(mem2_words[n],pc+4),ppc_decode(0x4e800020u,pc+8)};
+        emit_function(out,memory,3,pc);
+    }
+
     FunctionList funcs = {0};
     if (!function_list_add(&funcs, BASE, BASE + (u32)count * 4u) ||
         !function_list_add(&funcs, BASE + 0x1000, BASE + 0x100C) ||

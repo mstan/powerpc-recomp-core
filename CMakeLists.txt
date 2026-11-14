@@ -214,6 +214,19 @@ target_compile_definitions(test_c_execute_fp_scope PRIVATE DOLRECOMP_FP_GUARD_SC
 target_link_libraries(test_c_execute_fp_scope PRIVATE dr_cpu)
 add_test(NAME c_execute_fp_scope COMMAND test_c_execute_fp_scope)
 
+# Both variants use the same emitted memory fixtures and cycle observation.
+foreach(_mem2_mode reference inline)
+  add_executable(test_c_execute_mem2_${_mem2_mode}
+    tests/test_mem2_inline.c ${DOLRECOMP_C_TEST_SOURCE})
+  target_include_directories(test_c_execute_mem2_${_mem2_mode} PRIVATE ${DOLRECOMP_SRC})
+  target_compile_definitions(test_c_execute_mem2_${_mem2_mode} PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
+  if(_mem2_mode STREQUAL "inline")
+    target_compile_definitions(test_c_execute_mem2_${_mem2_mode} PRIVATE DOLRECOMP_INLINE_MEM2=1)
+  endif()
+  target_link_libraries(test_c_execute_mem2_${_mem2_mode} PRIVATE dr_cpu)
+  add_test(NAME c_execute_mem2_${_mem2_mode} COMMAND test_c_execute_mem2_${_mem2_mode})
+endforeach()
+
 add_executable(test_cycle_observation tests/test_cycle_observation.c ${DOLRECOMP_C_TEST_SOURCE})
 target_compile_definitions(test_cycle_observation PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
 target_include_directories(test_cycle_observation PRIVATE ${DOLRECOMP_SRC})
