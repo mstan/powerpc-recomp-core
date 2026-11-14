@@ -14,9 +14,18 @@ struct CPUState;
  * branch/page checkpoints still own those scheduling semantics. */
 typedef bool (*DrFunctionUnitGuard)(const struct CPUState*, uint32_t pc,
                                     uint64_t cycles, bool scheduling, void* user);
+/* Read-only eligibility for one immediate ordinary memory access. GPRs,
+ * PC and cycles may still be local: inspect only live bank/backing/ownership.
+ * True certifies that the original mapped access cannot call an observer,
+ * change bank bindings/deadlines, or invalidate this executing function.
+ * The instruction's ordinary result, reservation, watch and store bookkeeping
+ * remain required. NULL/false publishes state and delegates before effects. */
+typedef bool (*DrFunctionUnitMemory)(const struct CPUState*, uint32_t address,
+                                     uint32_t width, bool write, void* user);
 typedef struct {
     DrFunctionUnitGuard guard;
     void* user;
+    DrFunctionUnitMemory memory;
 } DrFunctionUnitOwner;
 typedef struct {
     uint32_t entry, end; /* Half-open original function extent. */

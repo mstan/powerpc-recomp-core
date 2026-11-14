@@ -21,6 +21,7 @@ static int fixture(FILE* out,u32 base,const u32* words,u32 count) {
     for(u32 i=0;i<count;++i)emit_function(out,code+i,1,code[i].address);
     dolrecomp_set_symbol_suffix("_candidate");
     int ok=emit_function_unit(out,code,count,base);
+    if(!ok)fprintf(stderr,"function fixture rejected at %08x\n",base);
     free(code);return ok;
 }
 
@@ -46,9 +47,18 @@ int main(int argc,char** argv) {
      * optional MEM2 inline lowering is disabled. The loop crosses a page. */
     const u32 reads[]={0x81250000u,0x7cc64a14u,0x38630001u,
         0x2c030004u,0x4180fff0u,0x4e800020u};
+    const u32 fp_load[]={0x38630001u,0x38a50004u,0xc4850004u,
+        0x38630001u,0x8545fffcu,0x4e800020u};
+    const u32 fp_store[]={0x38630001u,0x38a50004u,0xd4250004u,
+        0x38630001u,0x8545fffcu,0x4e800020u};
+    const u32 update_alias[]={0x38630001u,0x38a50004u,0x7d25306eu,
+        0x7ca5316eu,0x7d45326eu,0x90650000u,0x4e800020u};
     int ok=fixture(out,0x80006000u,integer,sizeof integer/sizeof *integer) &&
         fixture(out,0x80006200u,fp,sizeof fp/sizeof *fp) &&
         fixture(out,0x80006ff8u,pages,sizeof pages/sizeof *pages) &&
-        fixture(out,0x80007ff8u,reads,sizeof reads/sizeof *reads);
+        fixture(out,0x80007ff8u,reads,sizeof reads/sizeof *reads) &&
+        fixture(out,0x80008400u,fp_load,sizeof fp_load/sizeof *fp_load) &&
+        fixture(out,0x80008500u,fp_store,sizeof fp_store/sizeof *fp_store) &&
+        fixture(out,0x80008600u,update_alias,sizeof update_alias/sizeof *update_alias);
     fclose(out);return !ok;
 }

@@ -5,6 +5,8 @@ typedef struct {
     bool *leader, *pure, *entry;
     u32 *cost, *block_cost, *uses, *defs, *live_in, *live_out;
 } DrFunctionPlan;
+typedef struct {u32 width;bool indexed,update,store;} DrFunctionMemory;
+static bool fu_memory(const PPCInst*,DrFunctionMemory*);
 
 static void fu_plan_free(DrFunctionPlan* p) {
     free(p->leader); free(p->pure); free(p->entry); free(p->cost);
@@ -12,17 +14,13 @@ static void fu_plan_free(DrFunctionPlan* p) {
     free(p->live_in); free(p->live_out); memset(p, 0, sizeof(*p));
 }
 
-/* These arithmetic helpers have closed architectural effects: no guest bus
- * callback and no GPR observation/clobber. Memory stays an observing barrier.
- * FPR/FPSCR/SPR semantics are still emitted by the existing backend. */
+/* Memory joins the local dataflow only after runtime eligibility. Declines
+ * publish the exact boundary and leave the original page to own its effects.
+ * Other closed helpers retain the existing FPR/FPSCR/SPR semantics. */
 static bool fu_pure(const PPCInst* in) {
+    DrFunctionMemory memory;if(fu_memory(in,&memory))return true;
     if(fp_scope_preserved(in->op))return true;
     switch(in->op) {
-    case PPC_OP_LWZ: case PPC_OP_LWZU: case PPC_OP_LWZX: case PPC_OP_LWZUX:
-    case PPC_OP_LBZ: case PPC_OP_LBZU: case PPC_OP_LBZX: case PPC_OP_LBZUX:
-    case PPC_OP_LHZ: case PPC_OP_LHZU: case PPC_OP_LHZX: case PPC_OP_LHZUX:
-    case PPC_OP_LHA: case PPC_OP_LHAU: case PPC_OP_LHAX: case PPC_OP_LHAUX:
-        return false;
     case PPC_OP_MFSPR: case PPC_OP_MTSPR:
         return in->spr == 8 || in->spr == 9; /* LR/CTR only. */
     default: return gpr_locals_preserved(in->op);
@@ -30,6 +28,11 @@ static bool fu_pure(const PPCInst* in) {
 }
 
 static u32 fu_defs(const PPCInst* in) {
+    DrFunctionMemory memory;if(fu_memory(in,&memory)) {
+        u32 result=memory.update?1u<<in->rA:0;
+        if(!memory.store && !ppc_op_is_fp(in->op))result|=1u<<in->rD;
+        return result;
+    }
     if(ppc_op_is_fp(in->op)) return 0;
     if(in->op == PPC_OP_MFSPR) return 1u << in->rD;
     if(in->op == PPC_OP_MTSPR) return 0;
@@ -37,6 +40,12 @@ static u32 fu_defs(const PPCInst* in) {
 }
 
 static u32 fu_uses(const PPCInst* in) {
+    DrFunctionMemory memory;if(fu_memory(in,&memory)) {
+        u32 result=(in->rA || memory.update)?1u<<in->rA:0;
+        if(memory.indexed)result|=1u<<in->rB;
+        if(memory.store && !ppc_op_is_fp(in->op))result|=1u<<in->rS;
+        return result;
+    }
     if(ppc_op_is_fp(in->op)) return 0;
     switch(in->op) {
     case PPC_OP_B: case PPC_OP_BC: case PPC_OP_BCLR: case PPC_OP_BCCTR:
@@ -124,9 +133,9 @@ static bool fu_plan(DrFunctionPlan* p, const PPCInst* ins, u32 count, u32 base) 
         p->block_cost[first]=running;
         if(p->entry[i])++p->entries_count;
     }
-    /* Backward fixed point on actual direct-control-flow successors. An
-     * observing instruction publishes all dirty architectural values and
-     * reinitializes locals from CPUState, so locals do not flow across it. */
+    /* Backward fixed point on actual direct-control-flow successors. Ordinary
+     * memory retains locals; a declined access exits before any effect. True
+     * observing instructions still publish and end the local dataflow. */
     bool changed;
     do {
         changed=false;
@@ -168,7 +177,6 @@ static void fu_reads(FILE* out,bool direct) {
     }
 }
 
-typedef struct {u32 width;bool indexed,update,store;} DrFunctionMemory;
 static bool fu_memory(const PPCInst* in,DrFunctionMemory* memory) {
 #define FU_MEM(op,width,indexed,update,store) case PPC_OP_##op: \
     *memory=(DrFunctionMemory){width,indexed,update,store};return true
@@ -202,55 +210,48 @@ static bool fu_memory(const PPCInst* in,DrFunctionMemory* memory) {
 
 static void fu_memory_header(FILE* out) {
     fputs("#ifndef DOLRECOMP_FUNCTION_MEMORY_HELPERS\n#define DOLRECOMP_FUNCTION_MEMORY_HELPERS 1\n"
-        "#ifndef DR_FUNCTION_STORE_PAGE_CLOSED\n#if defined(__has_include)\n"
-        "#if __has_include(\"cpu/native_code.h\")\n#include \"cpu/native_code.h\"\n"
-        "#define DR_FUNCTION_STORE_PAGE_CLOSED(page) (gcn_native_store_pages[page]==GCN_NATIVE_STORE_DIRTY)\n"
-        "#endif\n#endif\n#endif\n#ifndef DR_FUNCTION_STORE_PAGE_CLOSED\n"
-        "#define DR_FUNCTION_STORE_PAGE_CLOSED(page) false\n#endif\n"
         "DR_MEM_INLINE bool dr_fu_mem1_offset(u32 ea,u32 width,u32* offset) {\n"
         "    if(ea>=GC_RAM_BASE && ea-GC_RAM_BASE<=GC_MAIN_RAM_SIZE-width)*offset=ea-GC_RAM_BASE;\n"
         "    else if(ea>=GC_RAM_UNCACHED && ea-GC_RAM_UNCACHED<=GC_MAIN_RAM_SIZE-width)*offset=ea-GC_RAM_UNCACHED;\n"
         "    else if(ea<=GC_MAIN_RAM_SIZE-width)*offset=ea;else return false;\n"
-        "    return true;\n}\n"
-        "/* Ordinary reads are closed by the live bank binding, independently\n"
-        " * of optional inline lowering. A complete RAM helper hit returns\n"
-        " * before external callbacks or architectural side effects. */\n"
-        "DR_MEM_INLINE bool dr_fu_read_closed(CPUState* ctx,u32 ea,u32 width) {\n"
-        "    if(!width || ea>UINT32_MAX-(width-1u))return false;\n"
-        "    u32 offset;if(ctx->ram && ctx->ram_size>=width &&\n"
-        "        dr_fu_mem1_offset(ea,width,&offset) && offset<=ctx->ram_size-width)return true;\n"
-        "    if(!ctx->mem2 || ctx->mem2_size<width)return false;\n"
-        "    const u32 last=ctx->mem2_size-width;\n"
-        "    if(ea>=0x10000000u && ea-0x10000000u<=last)return true;\n"
-        "    if(ctx->mem2_size<=UINT32_MAX-WII_MEM2_BASE &&\n"
-        "        ea>=WII_MEM2_BASE && ea-WII_MEM2_BASE<=last)return true;\n"
-        "    return ctx->mem2_size<=UINT32_MAX-WII_MEM2_UNCACHED &&\n"
-        "        ea>=WII_MEM2_UNCACHED && ea-WII_MEM2_UNCACHED<=last;\n}\n"
-        "DR_MEM_INLINE bool dr_fu_store_closed(u32 ea,u32 width,u32 first,u32 last) {\n"
-        "    u32 offset;if(!dr_fu_mem1_offset(ea,width,&offset) || width>4096u-(offset&4095u))return false;\n"
-        "    u32 page=offset>>12;if(page>=first && page<=last)return false;\n"
-        "    return DR_FUNCTION_STORE_PAGE_CLOSED(page);\n}\n#endif\n",out);
+        "    return true;\n}\n",out);
+    /* Eligibility has already excluded observers and changing backing. Keep
+     * the original cached-MEM1 lowering; mapped MEM2 uses the original CIA
+     * helpers without the outer wrapper's unobservable cycle publication. */
+    for(u32 bits=8;bits<=64;bits*=2) {
+        fprintf(out,"DR_MEM_INLINE u%u dr_fu_read%u(CPUState* ctx,u8* const ram,u32 ea,u32 cia,u64 cycles) {\n",bits,bits);
+        fprintf(out,"    u32 offset;if(dr_fu_mem1_offset(ea,%uu,&offset))return dolrecomp_mem_read%u_fast(ctx,ram,ea,cia,cycles);\n",bits/8,bits);
+        fprintf(out,"    return mem_read%u(ctx,ea,cia);\n}\n",bits);
+        fprintf(out,"DR_MEM_INLINE void dr_fu_write%u(CPUState* ctx,u8* const ram,u32 ea,u%u value,u32 cia,u64 cycles) {\n",bits,bits);
+        fprintf(out,"    u32 offset;if(dr_fu_mem1_offset(ea,%uu,&offset)){dolrecomp_mem_write%u_fast(ctx,ram,ea,value,cia,cycles);return;}\n",bits/8,bits);
+        fprintf(out,"    mem_write%u(ctx,ea,value,cia);\n}\n",bits);
+    }
+    fputs("#endif\n",out);
 }
 
-static void fu_delegate_before_helper(FILE* out,const PPCInst* in,u32 before,u32 base,u32 count) {
-    DrFunctionMemory memory;
-    if(fu_memory(in,&memory)) {
-        fputs("    {u32 dr_fu_ea=",out);
-        if(memory.indexed)emit_xform_ea(out,in->rA,in->rB,memory.update);
-        else emit_dform_ea(out,in->rA,in->simm,memory.update);
-        if(memory.store)
-            fprintf(out,";if(!dr_fu_store_closed(dr_fu_ea,%uu,%uu,%uu)) {\n",memory.width,
-                (base&0x1fffffffu)>>12,((base+count*4u-1u)&0x1fffffffu)>>12);
-        else fprintf(out,";if(!dr_fu_read_closed(ctx,dr_fu_ea,%uu)) {\n",memory.width);
-    } else fputs("    {\n",out);
+static void fu_memory_aliases(FILE* out,bool closed) {
+    for(u32 bits=8;bits<=64;bits*=2) {
+        fprintf(out,"#undef dolrecomp_mem_read%u_fast\n#undef dolrecomp_mem_write%u_fast\n",bits,bits);
+        if(closed)fprintf(out,"#define dolrecomp_mem_read%u_fast dr_fu_read%u\n#define dolrecomp_mem_write%u_fast dr_fu_write%u\n",bits,bits,bits,bits);
+    }
+}
+static void fu_delegate_before_helper(FILE* out,const PPCInst* in,u32 before) {
+    fputs("    DR_GPR_FLUSH();\n",out);
+    fprintf(out,"    ctx->pc=0x%08Xu;ctx->cycles=dr_cycles+%uu;\n",in->address,before);
     /* The owner records this exact identity token. Returning immediately at
      * it transfers the original page BEFORE an opaque effect. Its original
      * body captures RAM and owns its in-flight remainder, including stores
      * that retire bindings. No new scheduling admission is permitted. */
     fputs("    (void)owner->guard(ctx,ctx->pc,ctx->cycles,false,owner->user);\n",out);
-    fprintf(out,"    dr_cycles+=%uu;DR_RET();\n    }",before);
-    if(fu_memory(in,&memory))fputs("}",out);
-    fputs("\n",out);
+    fprintf(out,"    dr_cycles+=%uu;DR_RET();\n",before);
+}
+static void fu_memory_admit(FILE* out,const PPCInst* in,u32 before,const DrFunctionMemory* memory) {
+    fputs("    {u32 dr_fu_ea=",out);
+    if(memory->indexed)emit_xform_ea(out,in->rA,in->rB,memory->update);
+    else emit_dform_ea(out,in->rA,in->simm,memory->update);
+    fprintf(out,";if(!owner->memory || !owner->memory(ctx,dr_fu_ea,%uu,%s,owner->user)) {\n",memory->width,memory->store?"true":"false");
+    fu_delegate_before_helper(out,in,before);
+    fputs("    }}\n",out);
 }
 
 int emit_function_unit(FILE* out,const PPCInst* ins,u32 count,u32 base) {
@@ -266,6 +267,7 @@ int emit_function_unit(FILE* out,const PPCInst* ins,u32 count,u32 base) {
             base,suffix,base,base+count*4u,base,suffix,p.entries_count,base,suffix,p.blocks_count);
     fputs("#if DOLRECOMP_FUNCTION_UNIT && !DOLRECOMP_BLOCK_ENTRY_COMPAT\n",out);
     fu_memory_header(out);
+    fu_memory_aliases(out,true);
     fprintf(out,"DR_MEM_INLINE void fu_publish_%08X%s(CPUState* ctx,const u32* r,u32 mask) {\n",base,suffix);
     for(u32 n=0;n<32;++n)fprintf(out,"    if(mask & (1u<<%u))ctx->gpr[%u]=r[%u];\n",n,n,n);
     fputs("}\n",out);
@@ -295,6 +297,7 @@ int emit_function_unit(FILE* out,const PPCInst* ins,u32 count,u32 base) {
     const char* previous=s_label_prefix;s_label_prefix="fu_label_";
     for(u32 i=0;i<count;++i) {
         u32 before=p.cost[i]-dr_ppc_num_cycles(ins[i].op);
+        DrFunctionMemory memory;const bool access=fu_memory(&ins[i],&memory);
         fprintf(out,"fu_label_%08X:\n",ins[i].address);
         if(p.leader[i]) {
             fputs("    if(dr_fu_first)dr_fu_first=false;else {\n    DR_GPR_FLUSH();\n",out);
@@ -304,25 +307,18 @@ int emit_function_unit(FILE* out,const PPCInst* ins,u32 count,u32 base) {
             fputs("    dr_gpr_dirty=0;dr_gpr_live=true;\n    }\n",out);
         }
         fu_bank(out,p.pure[i]);
-        if(!p.pure[i]) {
-            fputs("    DR_GPR_FLUSH();\n",out);
-            fprintf(out,"    ctx->pc=0x%08Xu;ctx->cycles=dr_cycles+%uu;\n",ins[i].address,before);
-            fu_delegate_before_helper(out,&ins[i],before,base,count);
-        } else if(!ppc_op_is_pc_pure(ins[i].op))
+        if(access)fu_memory_admit(out,&ins[i],before,&memory);
+        else if(!p.pure[i])fu_delegate_before_helper(out,&ins[i],before);
+        else if(!ppc_op_is_pc_pure(ins[i].op))
             fprintf(out,"    ctx->pc=0x%08Xu;\n",ins[i].address);
         emit_instruction_with_range(out,&ins[i],base,base+count*4u,p.cost[i],false,false);
         if(p.pure[i] && p.defs[i])fprintf(out,"    DR_GPR_DIRTY(0x%08Xu);\n",p.defs[i]);
-        if(!p.pure[i]) {
-            fprintf(out,"    if(ctx->exception) {dr_cycles+=%uu;DR_RET();}\n",p.cost[i]);
-            fprintf(out,"    ctx->pc=0x%08Xu;ctx->cycles=dr_cycles+%uu;\n",ins[i].address+4u,p.cost[i]);
-            fprintf(out,"    if(ctx->ram!=dr_ram || !owner->guard(ctx,ctx->pc,ctx->cycles,false,owner->user)) {dr_cycles+=%uu;DR_RET();}\n",p.cost[i]);
-            fu_reload(out,p.live_out[i]);
-        }
         bool ends=i+1==count || p.leader[i+1];
         if(ends && !ppc_op_always_exits(ins[i].op))fprintf(out,"    dr_cycles+=%uu;\n",p.cost[i]);
     }
     fprintf(out,"    ctx->pc=0x%08Xu;DR_RET();\n}\n",base+count*4u);
     s_label_prefix=previous;
+    fu_memory_aliases(out,false);
     fu_bank(out,false);fu_reads(out,false);
     fputs("#undef DR_GPR_FLUSH\n#undef DR_GPR_DIRTY\n#if DOLRECOMP_GPR_LOCALS\n"
           "#define DR_GPR_FLUSH() do { if(dr_gpr_live){dr_gpr_publish(ctx,dr_gpr,dr_gpr_dirty);dr_gpr_live=false;} } while(0)\n"
