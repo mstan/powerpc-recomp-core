@@ -57,6 +57,24 @@ with a header exposing `DOLRECOMP_BLOCK_ENTRY_ABI`; do not mix relative ABI
 headers from different catalogs. This profile needs per-title qualification;
 its emitted shape and component checks do not establish a performance win.
 
+`DOLRECOMP_GPR_LOCALS=1` (or CMake target `dr_gpr_locals`) is an
+experimental, default-off register-bank profile. Integer ALU, ordinary MEM1
+reads and local control flow retain GPR values in invocation-local storage;
+opaque instructions and every exit publish dirty GPRs. Device reads publish
+before calling the bus and reload after it, including callback mutations.
+Stores, FP/system helpers, relocated code and CPU/RAM aliasing retain the
+canonical bank. Existing memory faults, reservations and observer paths remain
+in use. Arbitrary entry PCs initialize a fresh bank; same-page calls share it.
+
+Regenerate with `DOLRECOMP_GPR_LOCALS_ABI=1` before selecting this profile.
+All native-hook owner pages must use `DOLRECOMP_BLOCK_ENTRY_COMPAT=1` before
+the generated header, even when block-entry selection is off. That contract
+also disables local GPR caching on injected pages. Textual instruction rewrites
+must recognize the generated `DR_GPR[index]` spelling before regeneration;
+compatibility selection alone does not rewrite an injector's source patterns.
+Portable C and the default canonical path remain available. Component equivalence and fewer CPUState
+accesses in generated code do not establish a title performance improvement.
+
 ## License and upstream
 
 Imported copyright notices and the [GPL license](LICENSE) are preserved.

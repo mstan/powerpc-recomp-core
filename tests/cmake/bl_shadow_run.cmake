@@ -39,6 +39,11 @@ if(BLOCK_ENTRY)
         "target_compile_definitions(bl_shadow_check PRIVATE DOLRECOMP_BLOCK_ENTRY=1)\n")
 endif()
 
+if(GPR_LOCALS)
+    file(APPEND "${check_src_dir}/CMakeLists.txt"
+        "target_compile_definitions(bl_shadow_check PRIVATE DOLRECOMP_GPR_LOCALS=1)\n")
+endif()
+
 set(configure_args -S "${check_src_dir}" -B "${check_build_dir}")
 if(DEFINED HOST_GENERATOR AND NOT HOST_GENERATOR STREQUAL "")
     list(APPEND configure_args -G "${HOST_GENERATOR}")

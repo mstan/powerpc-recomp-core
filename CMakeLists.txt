@@ -56,6 +56,9 @@ add_library(dr_native_chain STATIC src/cpu/native_chain.c)
 target_include_directories(dr_native_chain SYSTEM PUBLIC ${DOLRECOMP_SRC})
 
 # Header-selected hot-entry specialization; no host descriptor or CPU ABI.
+add_library(dr_gpr_locals INTERFACE)
+target_compile_definitions(dr_gpr_locals INTERFACE DOLRECOMP_GPR_LOCALS=1)
+
 add_library(dr_block_entry INTERFACE)
 target_compile_definitions(dr_block_entry INTERFACE DOLRECOMP_BLOCK_ENTRY=1)
 
@@ -247,8 +250,22 @@ foreach(_entry_mode hot compat chain)
   add_test(NAME c_execute_block_${_entry_mode} COMMAND test_c_execute_block_${_entry_mode})
 endforeach()
 
-# Same generated instructions and expected architectural results, with the
-# optional FP guard scope and cycle-observation boundary both enabled.
+# Same generated instructions and full-CPU oracle with local banks enabled;
+# native owner compatibility still selects the canonical register bank.
+foreach(_gpr_mode plain block compat)
+  add_executable(test_c_execute_gpr_${_gpr_mode} tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+  target_include_directories(test_c_execute_gpr_${_gpr_mode} PRIVATE ${DOLRECOMP_SRC})
+  target_compile_definitions(test_c_execute_gpr_${_gpr_mode} PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
+  target_link_libraries(test_c_execute_gpr_${_gpr_mode} PRIVATE dr_cpu dr_gpr_locals)
+  if(NOT _gpr_mode STREQUAL "plain")
+    target_link_libraries(test_c_execute_gpr_${_gpr_mode} PRIVATE dr_block_entry)
+  endif()
+  if(_gpr_mode STREQUAL "compat")
+    target_compile_definitions(test_c_execute_gpr_${_gpr_mode} PRIVATE DOLRECOMP_BLOCK_ENTRY_COMPAT=1)
+  endif()
+  add_test(NAME c_execute_gpr_${_gpr_mode} COMMAND test_c_execute_gpr_${_gpr_mode})
+endforeach()
+
 add_executable(test_c_execute_fp_scope tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
 target_include_directories(test_c_execute_fp_scope PRIVATE ${DOLRECOMP_SRC})
 target_compile_definitions(test_c_execute_fp_scope PRIVATE DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
@@ -264,6 +281,10 @@ add_executable(test_native_chain tests/test_native_chain.c ${DOLRECOMP_C_TEST_SO
 target_compile_definitions(test_native_chain PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_OBSERVE_CYCLES=1)
 target_link_libraries(test_native_chain PRIVATE dr_cpu dr_native_chain)
 add_test(NAME native_chain_exact COMMAND test_native_chain)
+add_executable(test_native_chain_gpr tests/test_native_chain.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_native_chain_gpr PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_native_chain_gpr PRIVATE dr_cpu dr_native_chain dr_gpr_locals)
+add_test(NAME native_chain_gpr COMMAND test_native_chain_gpr)
 # An enabled emitter without an admitted host remains the existing native path.
 add_executable(test_c_execute_native_chain tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
 target_compile_definitions(test_c_execute_native_chain PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
@@ -303,6 +324,11 @@ target_compile_definitions(test_cycle_observation PRIVATE DOLRECOMP_OBSERVE_CYCL
 target_include_directories(test_cycle_observation PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_cycle_observation PRIVATE dr_cpu)
 add_test(NAME cycle_observation COMMAND test_cycle_observation)
+add_executable(test_cycle_observation_gpr tests/test_cycle_observation.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_cycle_observation_gpr PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
+target_include_directories(test_cycle_observation_gpr PRIVATE ${DOLRECOMP_SRC})
+target_link_libraries(test_cycle_observation_gpr PRIVATE dr_cpu dr_gpr_locals)
+add_test(NAME cycle_observation_gpr COMMAND test_cycle_observation_gpr)
 
 # Phase D2 (codegen speed campaign): real link+execute exactness proof for
 # the in-chunk bl/blr shadow-call-stack fast path (emitter.c's
@@ -337,6 +363,18 @@ add_test(NAME bl_shadow_block_entry
         -DBLOCK_ENTRY=1
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/bl_shadow_run.cmake)
 
+add_test(NAME bl_shadow_gpr_locals
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_bl_shadow_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/gpr-shadow/bl_shadow_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bl_shadow_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -DBLOCK_ENTRY=1 -DGPR_LOCALS=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/bl_shadow_run.cmake)
+
 # Campaign 3: execute the general lwz/cmplwi/backward-beq poll-loop peephole
 # through both its compact derived path and its untouched uniform fallback.
 add_executable(test_poll_loop_gen tests/test_poll_loop_gen.c)
@@ -366,3 +404,15 @@ add_test(NAME idle_skip_exactness
         -DHOST_BUILD_CONFIG=$<CONFIG>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake
 )
+
+add_test(NAME poll_loop_gpr_locals
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_poll_loop_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/gpr-poll/poll_loop_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_poll_loop_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -DENABLE_IDLE_SKIP=ON -DGPR_LOCALS=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake)

@@ -11,7 +11,7 @@ static DrNativeChain state,other;
 static uint64_t dispatches;
 static unsigned observations,max_depth,mode;
 static bool halted;
-static uint32_t observed_pc[16];
+static uint32_t observed_pc[16],observed_r3[16];
 static uint64_t observed_cycles[16];
 static const unsigned slot_a=DR_NATIVE_CHAIN_MEM1_PAGES+5;
 static const unsigned slot_b=DR_NATIVE_CHAIN_MEM1_PAGES+6;
@@ -19,7 +19,7 @@ static const unsigned slot_b=DR_NATIVE_CHAIN_MEM1_PAGES+6;
 
 static bool observe(const CPUState* cpu,void* user) {
     if(user!=&state)return false;
-    if(observations<16){observed_pc[observations]=cpu->pc;observed_cycles[observations]=cpu->cycles;}
+    if(observations<16){observed_pc[observations]=cpu->pc;observed_cycles[observations]=cpu->cycles;observed_r3[observations]=cpu->gpr[3];}
     ++observations;if(state.depth>max_depth)max_depth=state.depth;
     if(mode==1)return false;
     if(mode==2){if(dr_native_chain_bind(&other))return false;bindings[slot_b]=NULL;}
@@ -47,7 +47,7 @@ int main(void) {
     cpu=initial;state.admitted=true;func_80005000(&cpu);
     CHECK(!memcmp(&cpu,&reference,sizeof cpu));
     CHECK(cpu.pc==0x80007000 && cpu.cycles==104 && cpu.gpr[3]==2 && dispatches==1);
-    CHECK(observations==1 && observed_pc[0]==0x80006000 && observed_cycles[0]==102 && state.depth==0);
+    CHECK(observations==1 && observed_pc[0]==0x80006000 && observed_cycles[0]==102 && observed_r3[0]==1 && state.depth==0);
 
     setup(&cpu);cpu.pc=0x80005004;func_80005000(&cpu);
     CHECK(cpu.gpr[3]==1 && cpu.cycles==103 && cpu.pc==cpu.lr && dispatches==1);
@@ -74,7 +74,7 @@ int main(void) {
     setup(&cpu);cpu.lr=0x80005000;func_80005000(&cpu);
     CHECK(cpu.gpr[3]==9 && cpu.cycles==118 && cpu.pc==0x80006000);
     CHECK(dispatches==8 && observations==8 && max_depth==8 && state.depth==0);
-    for(unsigned i=0;i<8;++i)CHECK(observed_cycles[i]==102u+2u*i);
+    for(unsigned i=0;i<8;++i)CHECK(observed_cycles[i]==102u+2u*i && observed_r3[i]==i+1u);
 
     /* Different CPU, exceptions, deadlines, and non-MEM1/unaligned PCs never
      * enter a cached body. Aliases select independent entries without changing

@@ -1,3 +1,5 @@
+get_filename_component(output_dir "${OUTPUT_C}" DIRECTORY)
+file(MAKE_DIRECTORY "${output_dir}")
 execute_process(
     COMMAND "${GENERATOR_EXE}" "${OUTPUT_C}"
     RESULT_VARIABLE gen_result OUTPUT_VARIABLE gen_stdout ERROR_VARIABLE gen_stderr
@@ -6,7 +8,6 @@ if(NOT gen_result EQUAL 0)
     message(FATAL_ERROR "poll-loop generation failed:\n${gen_stdout}\n${gen_stderr}")
 endif()
 
-get_filename_component(output_dir "${OUTPUT_C}" DIRECTORY)
 set(check_src_dir "${output_dir}/poll_loop_check_project")
 set(check_build_dir "${output_dir}/poll_loop_check_build")
 if(ENABLE_IDLE_SKIP)
@@ -28,6 +29,11 @@ target_include_directories(poll_loop_check PRIVATE \"${repo_src_cmake}\")
 if(ENABLE_IDLE_SKIP)
     file(APPEND "${check_src_dir}/CMakeLists.txt"
         "target_compile_definitions(poll_loop_check PRIVATE DOLRECOMP_IDLE_SKIP=1)\n")
+endif()
+
+if(GPR_LOCALS)
+    file(APPEND "${check_src_dir}/CMakeLists.txt"
+        "target_compile_definitions(poll_loop_check PRIVATE DOLRECOMP_GPR_LOCALS=1)\n")
 endif()
 
 set(configure_args -S "${check_src_dir}" -B "${check_build_dir}")

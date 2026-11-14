@@ -143,10 +143,12 @@ static void test_codegen_supports_jumptable(const char* code) {
      * own fallback still bottoms out in mem_read32 for the non-RAM case, so
      * the underlying "this is a memory read" semantic is unchanged; only
      * the emitted call shape moved. */
-    /* E1: fast helpers take the function's hoisted RAM base (dr_ram). */
-    check(strstr(code, "dolrecomp_mem_read32_fast(ctx, dr_ram, ea,") != NULL,
+    /* The opt-in GPR bridge keeps the underlying fast RAM/bus helper and
+     * sequences destination selection after an observable bus callback. */
+    check(strstr(code, "DR_GPR_READ32(ctx, dr_ram, ea,") != NULL &&
+          strstr(code, "DR_GPR[12] = dr_value;") != NULL,
           "lwzx table load lowers to a memory read");
-    check(strstr(code, "ppc_mtspr(ctx, 9u, ctx->gpr[12]") != NULL,
+    check(strstr(code, "ppc_mtspr(ctx, 9u, DR_GPR[12]") != NULL,
           "mtctr loads the table entry into CTR");
 
     char needle[64];
