@@ -224,6 +224,15 @@ int main(int argc, char** argv) {
         emit_function(out,memory,3,pc);
     }
 
+    /* Two separately emitted chunks. Their cross-page branch and return must
+     * retain the same architectural state when a host admits native chaining. */
+    PPCInst chain_a[2]={ppc_decode(0x38630001u,0x80005000u),
+        ppc_decode(0x48000ffcu,0x80005004u)};
+    PPCInst chain_b[2]={ppc_decode(0x38630001u,0x80006000u),
+        ppc_decode(0x4e800020u,0x80006004u)};
+    emit_function(out,chain_a,2,0x80005000u);
+    emit_function(out,chain_b,2,0x80006000u);
+
     FunctionList funcs = {0};
     if (!function_list_add(&funcs, BASE, BASE + (u32)count * 4u) ||
         !function_list_add(&funcs, BASE + 0x1000, BASE + 0x100C) ||

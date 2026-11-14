@@ -822,7 +822,15 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "extern bool ppc_idle_can_skip(CPUState*,u32);\n"
         "extern void ppc_idle_note_cycles(u64);\n"
         "#endif\n"
+        "#ifndef DOLRECOMP_NATIVE_CHAIN\n"
+        "#define DOLRECOMP_NATIVE_CHAIN 0\n"
+        "#endif\n"
+        "#if DOLRECOMP_NATIVE_CHAIN\n"
+        "#include \"cpu/native_chain_inline.h\"\n"
+        "#define DR_RET() do { ctx->cycles = dr_cycles; if (dr_cycles > dr_chain_entry_cycles) (void)dr_native_chain_next(ctx); return; } while (0)\n"
+        "#else\n"
         "#define DR_RET() do { ctx->cycles = dr_cycles; return; } while (0)\n"
+        "#endif\n"
         "#if defined(DOLRECOMP_OBSERVE_CYCLES) && DOLRECOMP_OBSERVE_CYCLES\n"
         "#define DR_PUBLISH_CYCLES(value) (ctx->cycles = (value))\n"
         "#else\n"
@@ -3186,6 +3194,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
      * chunks with no memory ops warning-clean. */
     fprintf(out, "    u8* const dr_ram = ctx->ram;\n");
     fprintf(out, "    u64 dr_cycles = ctx->cycles;\n");
+    fprintf(out, "#if DOLRECOMP_NATIVE_CHAIN\n    const u64 dr_chain_entry_cycles = dr_cycles;\n#endif\n");
     fprintf(out, "    const u64 dr_deadline = ctx->cycle_deadline;\n");
     fprintf(out, "    (void)dr_ram; (void)dr_deadline;\n");
     fprintf(out, s_relocatable ? "    switch (ctx->pc - dr_bias) {\n" : "    switch (ctx->pc) {\n");
@@ -3275,7 +3284,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     fprintf(out, "    ctx->pc = %s;\n", emit_pc_literal(func_end));
     /* Falling off the chunk's end is an exit like any other â€” spill the
      * cycles local (DR_RET()'s job everywhere else). */
-    fprintf(out, "    ctx->cycles = dr_cycles;\n");
+    fprintf(out, "    DR_RET();\n");
     fprintf(out, "}\n\n");
 
     free(is_leader);

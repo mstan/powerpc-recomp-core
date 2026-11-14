@@ -50,6 +50,11 @@ endif()
 
 set(DOLRECOMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+# Optional generated-to-generated chaining. This library contains no CPUState
+# layout or feature define; an unbound/off consumer retains normal dispatch.
+add_library(dr_native_chain STATIC src/cpu/native_chain.c)
+target_include_directories(dr_native_chain SYSTEM PUBLIC ${DOLRECOMP_SRC})
+
 # Preserve the host's CPUState header before providing the optional semantics.
 # Unknown compiler profiles keep the functioning out-of-line implementation.
 add_library(dr_fp_inline INTERFACE)
@@ -232,6 +237,16 @@ add_executable(test_c_execute_fp_inline tests/test_c_execute.c ${DOLRECOMP_C_TES
 target_link_libraries(test_c_execute_fp_inline PRIVATE dr_cpu dr_fp_inline)
 target_compile_definitions(test_c_execute_fp_inline PRIVATE DOLRECOMP_OBSERVE_CYCLES=1 DOLRECOMP_FP_GUARD_SCOPE=1)
 add_test(NAME c_execute_fp_inline COMMAND test_c_execute_fp_inline)
+
+add_executable(test_native_chain tests/test_native_chain.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_native_chain PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_native_chain PRIVATE dr_cpu dr_native_chain)
+add_test(NAME native_chain_exact COMMAND test_native_chain)
+# An enabled emitter without an admitted host remains the existing native path.
+add_executable(test_c_execute_native_chain tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_c_execute_native_chain PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_c_execute_native_chain PRIVATE dr_cpu dr_native_chain dr_fp_inline)
+add_test(NAME c_execute_native_chain_unbound COMMAND test_c_execute_native_chain)
 
 add_executable(test_fp_inline tests/test_fp_inline.c)
 target_link_libraries(test_fp_inline PRIVATE dr_cpu dr_fp_inline)
