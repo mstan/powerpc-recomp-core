@@ -12,6 +12,7 @@ static EmitRelocation* s_relocations;
 static size_t s_relocation_count;
 static int s_relocatable;
 static _Thread_local int s_live_immediate;
+static _Thread_local const char* s_label_prefix = "label_";
 
 /* Immutable after CLI setup; chunk workers only read this table. */
 int emit_load_relocation_words(const char* path) {
@@ -533,7 +534,7 @@ static void emit_lwz_compare_beq_poll(FILE* out, const PPCInst* load,
     fprintf(out, "                ctx->cr = (ctx->cr & ~0x%08Xu) | (dr_poll_cr << %uu);\n",
             cr_mask, cr_shift);
     fprintf(out, "            }\n");
-    fprintf(out, "            goto label_%08X;\n", fallthrough);
+    fprintf(out, "            goto %s%08X;\n", s_label_prefix, fallthrough);
     fprintf(out, "        }\n");
     fprintf(out, "    }\n");
 }
@@ -597,9 +598,9 @@ static void emit_direct_branch(FILE* out, const PPCInst* inst, bool local_target
         if (local_call) {
             fprintf(out, "            if (dr_ret_sp < DOLRECOMP_BL_SHADOW_DEPTH && dr_cycles < dr_deadline) {\n");
             fprintf(out, "                dr_ret_pc[dr_ret_sp] = %s;\n", emit_pc_literal(inst->address + 4));
-            fprintf(out, "                dr_ret_lbl[dr_ret_sp] = &&label_%08X;\n", inst->address + 4);
+            fprintf(out, "                dr_ret_lbl[dr_ret_sp] = &&%s%08X;\n", s_label_prefix, inst->address + 4);
             fprintf(out, "                dr_ret_sp++;\n");
-            fprintf(out, "                goto label_%08X;\n", inst->branch_target);
+            fprintf(out, "                goto %s%08X;\n", s_label_prefix, inst->branch_target);
             fprintf(out, "            }\n");
         }
         fprintf(out, "            ctx->pc = %s;\n", emit_branch_literal(inst));
@@ -652,14 +653,14 @@ static void emit_direct_branch(FILE* out, const PPCInst* inst, bool local_target
          * the emitted control flow reproduces the pre-change always-return
          * behavior byte-for-byte. */
         if (conditional) {
-            fprintf(out, "            if (dr_cycles < dr_deadline) goto label_%08X;\n",
-                    inst->branch_target);
+            fprintf(out, "            if (dr_cycles < dr_deadline) goto %s%08X;\n",
+                    s_label_prefix, inst->branch_target);
         }
         fprintf(out, "            ctx->pc = %s;\n", emit_branch_literal(inst));
         fprintf(out, "            DR_RET();\n");
     } else if (local_target) {
         fprintf(out, "            dr_cycles += %uu;\n", cycle_charge);
-        fprintf(out, "            goto label_%08X;\n", inst->branch_target);
+        fprintf(out, "            goto %s%08X;\n", s_label_prefix, inst->branch_target);
     } else {
         fprintf(out, "            dr_cycles += %uu;\n", cycle_charge);
         fprintf(out, "            ctx->pc = %s;\n", emit_branch_literal(inst));
@@ -822,6 +823,14 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "extern bool ppc_idle_can_skip(CPUState*,u32);\n"
         "extern void ppc_idle_note_cycles(u64);\n"
         "#endif\n"
+        "/* Optional hot block entries retain a complete native resume body.\n"
+        " * Injected-owner pages define COMPAT=1 before including this ABI. */\n"
+        "#define DOLRECOMP_BLOCK_ENTRY_ABI 1\n"
+        "#ifndef DOLRECOMP_BLOCK_ENTRY\n#define DOLRECOMP_BLOCK_ENTRY 0\n#endif\n"
+        "#ifndef DOLRECOMP_BLOCK_ENTRY_COMPAT\n#define DOLRECOMP_BLOCK_ENTRY_COMPAT 0\n#endif\n"
+        "#if defined(_MSC_VER)\n#define DR_COLD_ENTRY __declspec(noinline)\n"
+        "#elif defined(__GNUC__) || defined(__clang__)\n#define DR_COLD_ENTRY __attribute__((noinline,cold))\n"
+        "#else\n#define DR_COLD_ENTRY\n#endif\n"
         "#ifndef DOLRECOMP_NATIVE_CHAIN\n"
         "#define DOLRECOMP_NATIVE_CHAIN 0\n"
         "#endif\n"
@@ -3113,13 +3122,16 @@ static void compute_block_costs(const PPCInst* insts, u32 count, u32 func_start,
     }
 }
 
-void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
+static void emit_function_body(FILE* out, const PPCInst* insts, u32 count, u32 func_addr,
+                               bool compatibility) {
     u32 i;
     u32 func_end = func_addr + count * 4u;
     bool* is_leader = NULL;
     bool* fp_proven = NULL;
     u32* cum = NULL;
     bool has_shadow_calls = false;
+    const char* previous_labels = s_label_prefix;
+    s_label_prefix = compatibility ? "resume_label_" : "label_";
 
     /* Match emit_direct_branch's local-call eligibility. A return-only chunk
      * has no shadow to pop and no address-of-label expression; Clang rejects
@@ -3158,8 +3170,10 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
         }
     }
 
-    fprintf(out, "void func_%08X%s(CPUState* ctx) {\n", func_addr,
-            dolrecomp_symbol_suffix());
+    if(compatibility)
+        fprintf(out, "static DR_COLD_ENTRY void dr_resume_%08X%s(CPUState* ctx) {\n",func_addr,dolrecomp_symbol_suffix());
+    else
+        fprintf(out, "void func_%08X%s(CPUState* ctx) {\n",func_addr,dolrecomp_symbol_suffix());
     if (s_relocatable)
         fprintf(out, "    const u32 dr_bias = ctx->native_pc_bias;\n");
     /* In-chunk bl/blr fast-path shadow call stack (see emit_direct_branch's
@@ -3206,30 +3220,45 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * that assumed it started at the leader. Leaders (PREFIX == 0) skip
          * the subtraction; it would be a no-op anyway. */
         u32 prefix = cum[i] - dr_ppc_num_cycles(insts[i].op);
+        const bool cold_entry = !compatibility && !s_relocatable && !is_leader[i];
+        if(cold_entry)
+            fprintf(out,"#if !DOLRECOMP_BLOCK_ENTRY || DOLRECOMP_BLOCK_ENTRY_COMPAT\n");
+        /* Parenthesized cold-case constants and a distinct label namespace
+         * keep the canonical consumer injection seam unambiguous. */
+        const char* before = compatibility ? "(" : "";
+        const char* after = compatibility ? ")" : "";
         if(fp_proven[i]) {
             /* Cold arbitrary-PC entry cannot inherit the fallthrough proof.
              * Its original prefix compensation and faulting CIA remain exact.
              * Local branch targets are leaders and keep their body guard. */
-            fprintf(out,"    case 0x%08Xu:\n",insts[i].address);
+            fprintf(out,"    case %s0x%08Xu%s:\n",before,insts[i].address,after);
             if(prefix)fprintf(out,"        dr_cycles -= %uu;\n",prefix);
             fprintf(out,"#if DOLRECOMP_FP_GUARD_SCOPE\n");
             emit_fp_guard(out,insts[i].address,cum[i]);
-            fprintf(out,"#endif\n        goto label_%08X;\n",insts[i].address);
+            fprintf(out,"#endif\n        goto %s%08X;\n",s_label_prefix,insts[i].address);
         } else if (prefix != 0) {
-            fprintf(out, "    case 0x%08Xu: dr_cycles -= %uu; goto label_%08X;\n",
-                    insts[i].address, prefix, insts[i].address);
+            fprintf(out, "    case %s0x%08Xu%s: dr_cycles -= %uu; goto %s%08X;\n",
+                    before,insts[i].address,after,prefix,s_label_prefix,insts[i].address);
         } else {
-            fprintf(out, "    case 0x%08Xu: goto label_%08X;\n",
-                    insts[i].address, insts[i].address);
+            fprintf(out, "    case %s0x%08Xu%s: goto %s%08X;\n",
+                    before,insts[i].address,after,s_label_prefix,insts[i].address);
         }
+        if(cold_entry)fprintf(out,"#endif\n");
     }
-    fprintf(out, "    default: DR_RET();\n");
+    if(!compatibility && !s_relocatable && count) {
+        fprintf(out,"    default:\n#if DOLRECOMP_BLOCK_ENTRY && !DOLRECOMP_BLOCK_ENTRY_COMPAT\n");
+        fprintf(out,"        dr_resume_%08X%s(ctx); return;\n",func_addr,dolrecomp_symbol_suffix());
+        fprintf(out,"#else\n        DR_RET();\n#endif\n");
+    }else fprintf(out, "    default: DR_RET();\n");
     fprintf(out, "    }\n");
 
     for (i = 0; i < count; i++) {
         bool block_ends_here = (i + 1 == count) || is_leader[i + 1];
 
-        fprintf(out, "label_%08X:\n", insts[i].address);
+        if(!compatibility && !s_relocatable && !is_leader[i])
+            fprintf(out,"#if !DOLRECOMP_BLOCK_ENTRY || DOLRECOMP_BLOCK_ENTRY_COMPAT\n");
+        fprintf(out, "%s%08X:\n", s_label_prefix, insts[i].address);
+        if(!compatibility && !s_relocatable && !is_leader[i])fprintf(out,"#endif\n");
         /* Phase B (codegen speed campaign): the per-instruction ctx->pc
          * store used to be unconditional here -- the single largest
          * remaining per-instruction memory write after Phase A coalesced
@@ -3290,4 +3319,19 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     free(is_leader);
     free(cum);
     free(fp_proven);
+    s_label_prefix = previous_labels;
+}
+
+void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
+    const bool capable = !s_relocatable && count != 0;
+    if(capable) {
+        fprintf(out,"#if DOLRECOMP_BLOCK_ENTRY && !DOLRECOMP_BLOCK_ENTRY_COMPAT\n");
+        fprintf(out,"static DR_COLD_ENTRY void dr_resume_%08X%s(CPUState*);\n#endif\n",func_addr,dolrecomp_symbol_suffix());
+    }
+    emit_function_body(out,insts,count,func_addr,false);
+    if(capable) {
+        fprintf(out,"/* DOLRECOMP_NATIVE_COMPAT_BEGIN */\n#if DOLRECOMP_BLOCK_ENTRY && !DOLRECOMP_BLOCK_ENTRY_COMPAT\n");
+        emit_function_body(out,insts,count,func_addr,true);
+        fprintf(out,"#endif\n/* DOLRECOMP_NATIVE_COMPAT_END */\n\n");
+    }
 }

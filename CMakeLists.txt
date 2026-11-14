@@ -55,6 +55,10 @@ set(DOLRECOMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 add_library(dr_native_chain STATIC src/cpu/native_chain.c)
 target_include_directories(dr_native_chain SYSTEM PUBLIC ${DOLRECOMP_SRC})
 
+# Header-selected hot-entry specialization; no host descriptor or CPU ABI.
+add_library(dr_block_entry INTERFACE)
+target_compile_definitions(dr_block_entry INTERFACE DOLRECOMP_BLOCK_ENTRY=1)
+
 # Preserve the host's CPUState header before providing the optional semantics.
 # Unknown compiler profiles keep the functioning out-of-line implementation.
 add_library(dr_fp_inline INTERFACE)
@@ -225,6 +229,24 @@ target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
 
+# Same emitted instruction/FP/arbitrary-entry fixture through the block-only
+# hot body and through the forced native compatibility page contract.
+foreach(_entry_mode hot compat chain)
+  add_executable(test_c_execute_block_${_entry_mode}
+    tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+  target_include_directories(test_c_execute_block_${_entry_mode} PRIVATE ${DOLRECOMP_SRC})
+  target_compile_definitions(test_c_execute_block_${_entry_mode} PRIVATE
+    DOLRECOMP_OBSERVE_CYCLES=1 DOLRECOMP_FP_GUARD_SCOPE=1)
+  if(_entry_mode STREQUAL "compat")
+    target_compile_definitions(test_c_execute_block_${_entry_mode} PRIVATE DOLRECOMP_BLOCK_ENTRY_COMPAT=1)
+  elseif(_entry_mode STREQUAL "chain")
+    target_compile_definitions(test_c_execute_block_${_entry_mode} PRIVATE DOLRECOMP_NATIVE_CHAIN=1)
+    target_link_libraries(test_c_execute_block_${_entry_mode} PRIVATE dr_native_chain)
+  endif()
+  target_link_libraries(test_c_execute_block_${_entry_mode} PRIVATE dr_cpu dr_block_entry)
+  add_test(NAME c_execute_block_${_entry_mode} COMMAND test_c_execute_block_${_entry_mode})
+endforeach()
+
 # Same generated instructions and expected architectural results, with the
 # optional FP guard scope and cycle-observation boundary both enabled.
 add_executable(test_c_execute_fp_scope tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
@@ -303,6 +325,17 @@ add_test(NAME bl_shadow_exactness
         -DHOST_BUILD_CONFIG=$<CONFIG>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/bl_shadow_run.cmake
 )
+add_test(NAME bl_shadow_block_entry
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_bl_shadow_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/block-entry/bl_shadow_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bl_shadow_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -DBLOCK_ENTRY=1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/bl_shadow_run.cmake)
 
 # Campaign 3: execute the general lwz/cmplwi/backward-beq poll-loop peephole
 # through both its compact derived path and its untouched uniform fallback.

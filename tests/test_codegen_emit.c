@@ -154,6 +154,10 @@ int main(int argc, char** argv) {
     memory_loop[4] = ppc_decode(0x4082FFF0u, BASE + 0x1050);
     memory_loop[5] = ppc_decode(0x4E800020u, BASE + 0x1054);
     emit_function(out, memory_loop, 6, BASE + 0x1040);
+    fprintf(out,"void fixture_native_resume(CPUState* ctx,u32 memory) {\n");
+    fprintf(out,"#if DOLRECOMP_BLOCK_ENTRY && !DOLRECOMP_BLOCK_ENTRY_COMPAT\n");
+    fprintf(out,"    if(memory)dr_resume_80004040(ctx);else dr_resume_80004020(ctx);\n");
+    fprintf(out,"#else\n    if(memory)func_80004040(ctx);else func_80004020(ctx);\n#endif\n}\n");
 
     PPCInst paired_compare[2];
     paired_compare[0] = ppc_decode((4u << 26) | (2u << 23) | (1u << 16) |

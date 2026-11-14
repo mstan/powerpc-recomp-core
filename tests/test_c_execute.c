@@ -34,6 +34,27 @@ void func_80004240(CPUState* ctx);
 void func_80004260(CPUState* ctx);
 void func_80004280(CPUState* ctx);
 void func_800042A0(CPUState* ctx);
+void fixture_native_resume(CPUState* ctx,u32 memory);
+
+static int block_entry_contract(CPUState* initial) {
+    const u32 budgets[]={0,1,2,3,8,100};unsigned cases=0;
+    for(u32 memory=0;memory<2;++memory)for(u32 entry=0;entry<(memory?6u:4u);++entry)
+    for(u32 n=0;n<6;++n)for(u32 value=1;value<=5;++value) {
+        CPUState hot=*initial,cold;
+        hot.pc=(memory?0x80004040u:0x80004020u)+entry*4;hot.lr=0x81234564;
+        hot.cycles=100;hot.cycle_deadline=budgets[n]?100+budgets[n]:0;
+        hot.exception=0;hot.external_read=NULL;hot.external_write=NULL;
+        hot.gpr[3]=value;hot.gpr[5]=0x80001000;cold=hot;
+        if(memory)func_80004040(&hot);else func_80004020(&hot);
+        fixture_native_resume(&cold,memory);
+        if(memcmp(&hot,&cold,sizeof hot)) {
+            fprintf(stderr,"block/native-resume mismatch memory=%u entry=%u budget=%u value=%u\n",memory,entry,budgets[n],value);
+            return 0;
+        }
+        ++cases;
+    }
+    printf("block/native-resume whole-CPU cases %u PASS\n",cases);return 1;
+}
 
 static u64 bits_of(f64 value) {
     u64 bits;
@@ -197,6 +218,7 @@ int main(void) {
     const int fp_scope_ok=fp_scope_contract(&cpu);
     if(!fp_scope_ok)fprintf(stderr,"FP scope pc=%08X srr0=%08X exception=%x cycles=%llu\n",
         cpu.pc,cpu.srr0,cpu.exception,(unsigned long long)cpu.cycles);
+    const int block_entry_ok=block_entry_contract(&cpu);
     cpu_free(&cpu);
-    return !(integer_ok && memory_ok && compare_ok && record_ok && merge_ok && overlap_ok && fp_scope_ok);
+    return !(integer_ok && memory_ok && compare_ok && record_ok && merge_ok && overlap_ok && fp_scope_ok && block_entry_ok);
 }

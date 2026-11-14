@@ -6,6 +6,8 @@
 # check. Modeled on codegen_compile.cmake's generate-then-build pattern, one
 # stage further (build an executable and execute it rather than stopping at
 # an object file).
+get_filename_component(output_dir "${OUTPUT_C}" DIRECTORY)
+file(MAKE_DIRECTORY "${output_dir}")
 execute_process(
     COMMAND "${GENERATOR_EXE}" "${OUTPUT_C}"
     RESULT_VARIABLE gen_result
@@ -16,7 +18,6 @@ if(NOT gen_result EQUAL 0)
     message(FATAL_ERROR "bl_shadow chunk generation failed:\n${gen_stdout}\n${gen_stderr}")
 endif()
 
-get_filename_component(output_dir "${OUTPUT_C}" DIRECTORY)
 set(check_src_dir "${output_dir}/bl_shadow_check_project")
 set(check_build_dir "${output_dir}/bl_shadow_check_build")
 
@@ -33,6 +34,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_executable(bl_shadow_check \"${output_c_cmake}\" \"${harness_src_cmake}\")
 target_include_directories(bl_shadow_check PRIVATE \"${repo_src_cmake}\")
 ")
+if(BLOCK_ENTRY)
+    file(APPEND "${check_src_dir}/CMakeLists.txt"
+        "target_compile_definitions(bl_shadow_check PRIVATE DOLRECOMP_BLOCK_ENTRY=1)\n")
+endif()
 
 set(configure_args -S "${check_src_dir}" -B "${check_build_dir}")
 if(DEFINED HOST_GENERATOR AND NOT HOST_GENERATOR STREQUAL "")
