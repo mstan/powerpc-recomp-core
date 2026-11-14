@@ -669,7 +669,7 @@ static void emit_direct_branch(FILE* out, const PPCInst* inst, bool local_target
 
 static void emit_dynamic_branch(FILE* out, const PPCInst* inst,
                                 const char* target_expr, u32 cycle_charge,
-                                bool is_blr_class) {
+                                bool is_blr_class, bool has_shadow_calls) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 target = %s;\n", target_expr);
     emit_branch_condition(out, inst->bo, inst->bi);
@@ -682,7 +682,7 @@ static void emit_dynamic_branch(FILE* out, const PPCInst* inst,
      * fresh leader on the instruction that follows them, so that flush
      * fires exactly here). */
     fprintf(out, "            dr_cycles += %uu;\n", cycle_charge);
-    if (is_blr_class) {
+    if (is_blr_class && has_shadow_calls) {
         /* Shadow-stack pop: this fires only when a same-chunk bl already
          * pushed a matching entry (see emit_direct_branch's local_call
          * path) -- dr_ret_pc[dr_ret_sp-1] is architecturally exactly the
@@ -1298,7 +1298,8 @@ static void emit_fp_guard(FILE* out,u32 address,u32 charge) {
 
 static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
                                         u32 func_start, u32 func_end,
-                                        u32 cycle_charge,bool fp_proven) {
+                                        u32 cycle_charge,bool fp_proven,
+                                        bool has_shadow_calls) {
     char disasm[64];
     ppc_disasm(disasm, sizeof(disasm), inst);
     fprintf(out, "    // %08X: %s\n", inst->address, disasm);
@@ -2518,7 +2519,7 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
     case PPC_OP_BCLR:
         /* is_blr_class=true: the canonical return instruction. Eligible for
          * the shadow-stack pop fast path -- see emit_dynamic_branch. */
-        emit_dynamic_branch(out, inst, "ctx->lr & ~3u", cycle_charge, true);
+        emit_dynamic_branch(out, inst, "ctx->lr & ~3u", cycle_charge, true,has_shadow_calls);
         break;
 
     case PPC_OP_BCCTR:
@@ -2527,7 +2528,7 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
          * stack: matching by coincidental ctx->ctr == some pushed return PC
          * would be semantically bogus (bcctr never pops a call frame on real
          * hardware), so it keeps the original always-return codegen. */
-        emit_dynamic_branch(out, inst, "ctx->ctr & ~3u", cycle_charge, false);
+        emit_dynamic_branch(out, inst, "ctx->ctr & ~3u", cycle_charge, false,has_shadow_calls);
         break;
 
     case PPC_OP_TWI:
@@ -2705,7 +2706,7 @@ void emit_instruction(FILE* out, const PPCInst* inst) {
      * context (no switch-dispatch entry compensation, no block-exit flush --
      * see emit_function for that machinery), so this instruction is its own
      * one-instruction "block": charge exactly its own cost at any exit. */
-    emit_instruction_with_range(out, inst, 0, (u32)-1, dr_ppc_num_cycles(inst->op),false);
+    emit_instruction_with_range(out, inst, 0, (u32)-1, dr_ppc_num_cycles(inst->op),false,true);
 }
 
 /* A "branch" for basic-block boundary purposes: any instruction that can
@@ -3110,6 +3111,22 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     bool* is_leader = NULL;
     bool* fp_proven = NULL;
     u32* cum = NULL;
+    bool has_shadow_calls = false;
+
+    /* Match emit_direct_branch's local-call eligibility. A return-only chunk
+     * has no shadow to pop and no address-of-label expression; Clang rejects
+     * an indirect goto in such a function even when its depth is always zero.
+     * Linked REL24 branches leave through their runtime relocation route. */
+    for (i = 0; i < count; ++i) {
+        if (!insts[i].embedded_data && insts[i].lk &&
+            (insts[i].op == PPC_OP_B || insts[i].op == PPC_OP_BC) &&
+            branch_target_is_local(func_addr,func_end,insts[i].branch_target) &&
+            branch_target_is_local(func_addr,func_end,insts[i].address+4u) &&
+            (!s_relocatable || relocation_kind(insts[i].address) != 10)) {
+            has_shadow_calls = true;
+            break;
+        }
+    }
 
     if (count > 0) {
         is_leader = (bool*)malloc(count * sizeof(bool));
@@ -3139,7 +3156,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
         fprintf(out, "    const u32 dr_bias = ctx->native_pc_bias;\n");
     /* In-chunk bl/blr fast-path shadow call stack (see emit_direct_branch's
      * lk-branch handling and emit_dynamic_branch's is_blr_class handling).
-     * Declared UNCONDITIONALLY, before the switch, so `dr_ret_sp = 0` runs on
+     * When needed, declared before the switch, so `dr_ret_sp = 0` runs on
      * EVERY entry into this function regardless of which case the switch
      * lands on -- including a mid-function dispatch-loop re-entry landing
      * past this declaration, which in C never re-runs a skipped initializer.
@@ -3150,9 +3167,11 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
      * as any other automatic-storage local). The arrays themselves need no
      * initializer -- they are only ever read at indices the matching push
      * already wrote in THIS SAME invocation. */
-    fprintf(out, "    void* dr_ret_lbl[DOLRECOMP_BL_SHADOW_DEPTH];\n");
-    fprintf(out, "    u32 dr_ret_pc[DOLRECOMP_BL_SHADOW_DEPTH];\n");
-    fprintf(out, "    u32 dr_ret_sp = 0;\n");
+    if (has_shadow_calls) {
+        fprintf(out, "    void* dr_ret_lbl[DOLRECOMP_BL_SHADOW_DEPTH];\n");
+        fprintf(out, "    u32 dr_ret_pc[DOLRECOMP_BL_SHADOW_DEPTH];\n");
+        fprintf(out, "    u32 dr_ret_sp = 0;\n");
+    }
     /* E1 (perf campaign 2): invocation-scoped locals. dr_ram: the RAM base
      * never changes after cpu_init, and a local (address never taken) cannot
      * be aliased by guest stores, so gcc keeps it in a host register instead
@@ -3240,7 +3259,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * the charge below (cum[i], the block-leader..here inclusive sum)
          * is exact regardless of where execution actually entered. Cost
          * values are Dolphin's own oracle timing model â€” see ppc_cycles.c. */
-        emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i],fp_proven[i]);
+        emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i],fp_proven[i],has_shadow_calls);
 
         if (block_ends_here && !ppc_op_always_exits(insts[i].op)) {
             /* This instruction can fall through (on at least one path) into
