@@ -3,6 +3,9 @@
 #include <string.h>
 
 #include "../src/cpu/cpu.h"
+#if defined(DOLRECOMP_INLINE_FP) && DOLRECOMP_INLINE_FP
+#include "../src/cpu/fp_binary.h"
+#endif
 
 #define FPCC(cpu) (((cpu).fpscr >> 12) & 0xFu)
 #define FPRF(cpu) (((cpu).fpscr >> 12) & 0x1Fu)

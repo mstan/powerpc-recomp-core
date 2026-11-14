@@ -879,6 +879,10 @@ bool ppc_trap_condition(u8 to, u32 a, u32 b) {
            ((a > b) && (to & 0x01u));
 }
 
+#define DOLRECOMP_FP_IMPLEMENTATION 1
+#include "fp_binary.h"
+#undef DOLRECOMP_FP_IMPLEMENTATION
+
 typedef struct {
     s32 base;
     s32 dec;
@@ -908,33 +912,21 @@ static const EstimateEntry fres_table[32] = {
     {0x088400, 0x11a}, {0x065000, 0x11a}, {0x041c00, 0x108}, {0x020c00, 0x106},
 };
 
-static u64 f64_bits(f64 value) {
-    u64 bits;
-    memcpy(&bits, &value, sizeof(bits));
-    return bits;
-}
-
-static f64 f64_value(u64 bits) {
-    f64 value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
 f64 ppc_approx_rsqrt(f64 value) {
-    u64 bits = f64_bits(value);
+    u64 bits = dr_fp_f64_bits(value);
     u64 mantissa = bits & 0x000FFFFFFFFFFFFFull;
     u64 sign = bits & 0x8000000000000000ull;
     s64 exponent = (s64)(bits & 0x7FF0000000000000ull);
 
     if (mantissa == 0 && exponent == 0)
-        return f64_value(sign | 0x7FF0000000000000ull);
+        return dr_fp_f64_value(sign | 0x7FF0000000000000ull);
     if (exponent == (s64)0x7FF0000000000000ull) {
         if (mantissa == 0)
-            return sign ? f64_value(0x7FF8000000000000ull) : 0.0;
-        return f64_value(bits | 0x0008000000000000ull);
+            return sign ? dr_fp_f64_value(0x7FF8000000000000ull) : 0.0;
+        return dr_fp_f64_value(bits | 0x0008000000000000ull);
     }
     if (sign)
-        return f64_value(0x7FF8000000000000ull);
+        return dr_fp_f64_value(0x7FF8000000000000ull);
 
     if (exponent == 0) {
         do {
@@ -953,96 +945,43 @@ f64 ppc_approx_rsqrt(f64 value) {
     const EstimateEntry* entry = &frsqrte_table[i / 2048u];
     bits = (u64)exponent |
            ((u64)(entry->base + entry->dec * (s32)(i % 2048u)) << 26);
-    return f64_value(bits);
+    return dr_fp_f64_value(bits);
 }
 
 f64 ppc_approx_reciprocal(f64 value) {
-    u64 bits = f64_bits(value);
+    u64 bits = dr_fp_f64_bits(value);
     u64 mantissa = bits & 0x000FFFFFFFFFFFFFull;
     u64 sign = bits & 0x8000000000000000ull;
     u64 exponent = bits & 0x7FF0000000000000ull;
 
     if (mantissa == 0 && exponent == 0)
-        return f64_value(sign | 0x7FF0000000000000ull);
+        return dr_fp_f64_value(sign | 0x7FF0000000000000ull);
     if (exponent == 0x7FF0000000000000ull) {
         if (mantissa == 0)
-            return f64_value(sign);
-        return f64_value(bits | 0x0008000000000000ull);
+            return dr_fp_f64_value(sign);
+        return dr_fp_f64_value(bits | 0x0008000000000000ull);
     }
     if (exponent < (895ull << 52))
-        return f64_value(sign | 0x47EFFFFFE0000000ull);
+        return dr_fp_f64_value(sign | 0x47EFFFFFE0000000ull);
     if (exponent >= (1149ull << 52))
-        return f64_value(sign);
+        return dr_fp_f64_value(sign);
 
     exponent = 0x7FD0000000000000ull - exponent;
     u32 i = (u32)(mantissa >> 37);
     const EstimateEntry* entry = &fres_table[i / 1024u];
     bits = sign | exponent |
            ((u64)(entry->base - (entry->dec * (s32)(i % 1024u) + 1) / 2) << 29);
-    return f64_value(bits);
-}
-
-void ppc_fpscr_updated(CPUState* cpu) {
-    const u32 vx_any = 0x01F80700u;
-    const u32 any_e = 0x000000F8u;
-    u32 fpscr = cpu->fpscr;
-    fpscr = (fpscr & ~0x20000000u) | ((fpscr & vx_any) ? 0x20000000u : 0u);
-    fpscr = (fpscr & ~0x40000000u) |
-            ((((fpscr >> 22) & fpscr & any_e) != 0) ? 0x40000000u : 0u);
-    cpu->fpscr = fpscr;
-}
-
-static void set_fp_exception(CPUState* cpu, u32 bit) {
-    if ((cpu->fpscr & bit) != bit)
-        cpu->fpscr |= 0x80000000u;
-    cpu->fpscr |= bit;
-    ppc_fpscr_updated(cpu);
-}
-
-static bool is_snan(f64 value) {
-    u64 bits = f64_bits(value);
-    u64 fraction = bits & 0x000FFFFFFFFFFFFFull;
-    return (bits & 0x7FF0000000000000ull) == 0x7FF0000000000000ull &&
-           fraction != 0 && (fraction & 0x0008000000000000ull) == 0;
-}
-
-static u32 classify_f64(f64 value) {
-    u64 bits = f64_bits(value);
-    u64 sign = bits >> 63;
-    u64 exponent = bits & 0x7FF0000000000000ull;
-    u64 fraction = bits & 0x000FFFFFFFFFFFFFull;
-    if (exponent == 0x7FF0000000000000ull)
-        return fraction ? 0x11u : (sign ? 0x09u : 0x05u);
-    if (exponent == 0)
-        return fraction ? (sign ? 0x18u : 0x14u) : (sign ? 0x12u : 0x02u);
-    return sign ? 0x08u : 0x04u;
-}
-
-static u32 classify_f32(f32 value) {
-    u32 bits;
-    memcpy(&bits, &value, sizeof(bits));
-    u32 sign = bits >> 31;
-    u32 exponent = bits & 0x7F800000u;
-    u32 fraction = bits & 0x007FFFFFu;
-    if (exponent == 0x7F800000u)
-        return fraction ? 0x11u : (sign ? 0x09u : 0x05u);
-    if (exponent == 0)
-        return fraction ? (sign ? 0x18u : 0x14u) : (sign ? 0x12u : 0x02u);
-    return sign ? 0x08u : 0x04u;
-}
-
-static void set_fprf(CPUState* cpu, u32 value) {
-    cpu->fpscr = (cpu->fpscr & ~(0x1Fu << 12)) | ((value & 0x1Fu) << 12);
+    return dr_fp_f64_value(bits);
 }
 
 bool ppc_fres(CPUState* cpu, f64 value, f64* result) {
     if (value == 0.0) {
-        set_fp_exception(cpu, 0x04000000u);
+        dr_fp_set_fp_exception(cpu, 0x04000000u);
         cpu->fpscr &= ~0x00006000u;
         if (cpu->fpscr & 0x10u)
             return false;
-    } else if (is_snan(value)) {
-        set_fp_exception(cpu, 0x01000000u);
+    } else if (dr_fp_is_snan(value)) {
+        dr_fp_set_fp_exception(cpu, 0x01000000u);
         cpu->fpscr &= ~0x00006000u;
         if (cpu->fpscr & 0x80u)
             return false;
@@ -1051,23 +990,23 @@ bool ppc_fres(CPUState* cpu, f64 value, f64* result) {
     }
 
     *result = ppc_approx_reciprocal(value);
-    set_fprf(cpu, classify_f32((f32)*result));
+    dr_fp_set_fprf(cpu, dr_fp_classify_f32((f32)*result));
     return true;
 }
 
 bool ppc_frsqrte(CPUState* cpu, f64 value, f64* result) {
     if (value < 0.0) {
-        set_fp_exception(cpu, 0x00000200u);
+        dr_fp_set_fp_exception(cpu, 0x00000200u);
         cpu->fpscr &= ~0x00006000u;
         if (cpu->fpscr & 0x80u)
             return false;
     } else if (value == 0.0) {
-        set_fp_exception(cpu, 0x04000000u);
+        dr_fp_set_fp_exception(cpu, 0x04000000u);
         cpu->fpscr &= ~0x00006000u;
         if (cpu->fpscr & 0x10u)
             return false;
-    } else if (is_snan(value)) {
-        set_fp_exception(cpu, 0x01000000u);
+    } else if (dr_fp_is_snan(value)) {
+        dr_fp_set_fp_exception(cpu, 0x01000000u);
         cpu->fpscr &= ~0x00006000u;
         if (cpu->fpscr & 0x80u)
             return false;
@@ -1076,70 +1015,40 @@ bool ppc_frsqrte(CPUState* cpu, f64 value, f64* result) {
     }
 
     *result = ppc_approx_rsqrt(value);
-    set_fprf(cpu, classify_f64(*result));
+    dr_fp_set_fprf(cpu, dr_fp_classify_f64(*result));
     return true;
 }
 
 void ppc_ps_res(CPUState* cpu, f64 a, f64 b, f64* result_a, f64* result_b) {
     if (a == 0.0 || b == 0.0) {
-        set_fp_exception(cpu, 0x04000000u);
+        dr_fp_set_fp_exception(cpu, 0x04000000u);
         cpu->fpscr &= ~0x00006000u;
     }
-    if (is_snan(a) || is_snan(b))
-        set_fp_exception(cpu, 0x01000000u);
+    if (dr_fp_is_snan(a) || dr_fp_is_snan(b))
+        dr_fp_set_fp_exception(cpu, 0x01000000u);
     if (isnan(a) || isinf(a) || isnan(b) || isinf(b))
         cpu->fpscr &= ~0x00006000u;
     *result_a = ppc_approx_reciprocal(a);
     *result_b = ppc_approx_reciprocal(b);
-    set_fprf(cpu, classify_f32((f32)*result_a));
+    dr_fp_set_fprf(cpu, dr_fp_classify_f32((f32)*result_a));
 }
 
 void ppc_ps_rsqrte(CPUState* cpu, f64 a, f64 b, f64* result_a, f64* result_b) {
     if (a == 0.0 || b == 0.0) {
-        set_fp_exception(cpu, 0x04000000u);
+        dr_fp_set_fp_exception(cpu, 0x04000000u);
         cpu->fpscr &= ~0x00006000u;
     }
     if (a < 0.0 || b < 0.0) {
-        set_fp_exception(cpu, 0x00000200u);
+        dr_fp_set_fp_exception(cpu, 0x00000200u);
         cpu->fpscr &= ~0x00006000u;
     }
-    if (is_snan(a) || is_snan(b))
-        set_fp_exception(cpu, 0x01000000u);
+    if (dr_fp_is_snan(a) || dr_fp_is_snan(b))
+        dr_fp_set_fp_exception(cpu, 0x01000000u);
     if (isnan(a) || isinf(a) || isnan(b) || isinf(b))
         cpu->fpscr &= ~0x00006000u;
     *result_a = ppc_approx_rsqrt(a);
     *result_b = ppc_approx_rsqrt(b);
-    set_fprf(cpu, classify_f32((f32)*result_a));
-}
-
-static unsigned leading_zeroes_u64(u64 value) {
-    unsigned count = 0;
-    while ((value & 0x8000000000000000ull) == 0) {
-        value <<= 1;
-        count++;
-    }
-    return count;
-}
-
-static f64 force_25_bit(f64 value) {
-    u64 bits = f64_bits(value);
-    u64 fraction = bits & 0x000FFFFFFFFFFFFFull;
-    u64 keep_mask = 0xFFFFFFFFF8000000ull;
-    u64 round = 0x0000000008000000ull;
-
-    if ((bits & 0x7FF0000000000000ull) == 0 && fraction != 0) {
-        unsigned shift = leading_zeroes_u64(fraction) - 11;
-        if (shift < 28) {
-            keep_mask = ~((1ull << (27 - shift)) - 1);
-            round >>= shift;
-        } else {
-            keep_mask = ~0ull;
-            round = 0;
-        }
-    }
-
-    bits = (bits & keep_mask) + (bits & round);
-    return f64_value(bits);
+    dr_fp_set_fprf(cpu, dr_fp_classify_f32((f32)*result_a));
 }
 
 bool ppc_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single,
@@ -1150,9 +1059,9 @@ bool ppc_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single,
     if (!single) {
         result = fma(a, c, addend);
     } else {
-        f64 rounded_c = force_25_bit(c);
+        f64 rounded_c = dr_fp_force_25_bit(c);
         result = fma(a, rounded_c, addend);
-        u64 bits = f64_bits(result);
+        u64 bits = dr_fp_f64_bits(result);
         if ((bits & 0x000000001FFFFFFFull) == 0x0000000010000000ull) {
             f64 a_prime = addend - result;
             f64 b_prime = result + a_prime;
@@ -1160,7 +1069,7 @@ bool ppc_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single,
             if (error != 0.0) {
                 if ((error > 0.0) == (result > 0.0)) bits++;
                 else bits--;
-                result = f64_value(bits);
+                result = dr_fp_f64_value(bits);
             }
         }
         result = (f64)(f32)result;
@@ -1168,25 +1077,25 @@ bool ppc_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single,
 
     if (isnan(result)) {
         u32 invalid = 0;
-        if (is_snan(a) || is_snan(b) || is_snan(c))
+        if (dr_fp_is_snan(a) || dr_fp_is_snan(b) || dr_fp_is_snan(c))
             invalid |= 0x01000000u;
 
         cpu->fpscr &= ~0x00006000u;
         if (isnan(a)) {
-            result = f64_value(f64_bits(a) | 0x0008000000000000ull);
+            result = dr_fp_f64_value(dr_fp_f64_bits(a) | 0x0008000000000000ull);
         } else if (isnan(b)) {
-            result = f64_value(f64_bits(b) | 0x0008000000000000ull);
+            result = dr_fp_f64_value(dr_fp_f64_bits(b) | 0x0008000000000000ull);
         } else if (isnan(c)) {
-            result = f64_value(f64_bits(c) | 0x0008000000000000ull);
+            result = dr_fp_f64_value(dr_fp_f64_bits(c) | 0x0008000000000000ull);
         } else {
             bool invalid_multiply = (a == 0.0 && isinf(c)) ||
                                     (isinf(a) && c == 0.0);
             invalid |= invalid_multiply ? 0x00100000u : 0x00800000u;
-            result = f64_value(0x7FF8000000000000ull);
+            result = dr_fp_f64_value(0x7FF8000000000000ull);
         }
 
         if (invalid) {
-            set_fp_exception(cpu, invalid);
+            dr_fp_set_fp_exception(cpu, invalid);
             if (cpu->fpscr & 0x80u)
                 return false;
         }
@@ -1196,7 +1105,7 @@ bool ppc_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single,
 
     if (negative && !isnan(result))
         result = -result;
-    set_fprf(cpu, single ? classify_f32((f32)result) : classify_f64(result));
+    dr_fp_set_fprf(cpu, single ? dr_fp_classify_f32((f32)result) : dr_fp_classify_f64(result));
     *output = result;
     return true;
 }
@@ -1235,8 +1144,8 @@ bool ppc_fctiw(CPUState* cpu, f64 value, bool toward_zero, u64* output) {
     u32 result;
     bool invalid = false;
     if (isnan(value)) {
-        if (is_snan(value))
-            set_fp_exception(cpu, 0x01000000u);
+        if (dr_fp_is_snan(value))
+            dr_fp_set_fp_exception(cpu, 0x01000000u);
         result = 0x80000000u;
         invalid = true;
     } else if (rounded >= 2147483648.0) {
@@ -1251,9 +1160,9 @@ bool ppc_fctiw(CPUState* cpu, f64 value, bool toward_zero, u64* output) {
 
     cpu->fpscr &= ~0x00006000u;
     if (invalid) {
-        set_fp_exception(cpu, 0x00000100u);
+        dr_fp_set_fp_exception(cpu, 0x00000100u);
     } else if (rounded != value) {
-        set_fp_exception(cpu, 0x02000000u);
+        dr_fp_set_fp_exception(cpu, 0x02000000u);
         cpu->fpscr |= 0x00004000u;
         if (fabs(rounded) > fabs(value))
             cpu->fpscr |= 0x00002000u;
@@ -1271,12 +1180,12 @@ void ppc_fcmp(CPUState* cpu, u8 crfd, f64 a, f64 b, bool ordered) {
     u32 compare;
     if (isnan(a) || isnan(b)) {
         compare = 1u;
-        if (is_snan(a) || is_snan(b)) {
-            set_fp_exception(cpu, 0x01000000u);
+        if (dr_fp_is_snan(a) || dr_fp_is_snan(b)) {
+            dr_fp_set_fp_exception(cpu, 0x01000000u);
             if (ordered && (cpu->fpscr & 0x80u) == 0)
-                set_fp_exception(cpu, 0x00080000u);
+                dr_fp_set_fp_exception(cpu, 0x00080000u);
         } else if (ordered) {
-            set_fp_exception(cpu, 0x00080000u);
+            dr_fp_set_fp_exception(cpu, 0x00080000u);
         }
     } else if (a < b) {
         compare = 8u;
@@ -1291,248 +1200,4 @@ void ppc_fcmp(CPUState* cpu, u8 crfd, f64 a, f64 b, bool ordered) {
     cpu->fpscr = (cpu->fpscr & ~(0xFu << 12)) | (compare << 12);
     u32 shift = 4u * (7u - crfd);
     cpu->cr = (cpu->cr & ~(0xFu << shift)) | (compare << shift);
-}
-
-enum {
-    FPSCR_ZX = 0x04000000u,
-    FPSCR_XX = 0x02000000u,
-    FPSCR_VXSNAN = 0x01000000u,
-    FPSCR_VXISI = 0x00800000u,
-    FPSCR_VXIDI = 0x00400000u,
-    FPSCR_VXZDZ = 0x00200000u,
-    FPSCR_VXIMZ = 0x00100000u,
-    FPSCR_FR = 0x00040000u,
-    FPSCR_FI = 0x00020000u,
-    FPSCR_VE = 0x00000080u,
-    FPSCR_ZE = 0x00000010u,
-    FPSCR_NI = 0x00000004u,
-};
-
-typedef struct {
-    f64 value;
-    u32 exception;
-} FPBinaryResult;
-
-typedef enum {
-    FP_ADD,
-    FP_SUB,
-    FP_MUL,
-    FP_DIV,
-} FPBinaryOp;
-
-static f64 quiet_nan(f64 value) {
-    return f64_value(f64_bits(value) | 0x0008000000000000ull);
-}
-
-static f32 force_single(CPUState* cpu, f64 value) {
-    if (cpu->fpscr & FPSCR_NI) {
-        u64 bits = f64_bits(value);
-        if ((bits & 0x7FFFFFFFFFFFFFFFull) < 0x3810000000000000ull)
-            return f32_value((u32)(bits >> 32) & 0x80000000u);
-    }
-
-    f32 result = (f32)value;
-    if ((cpu->fpscr & FPSCR_NI) && fpclassify(result) == FP_SUBNORMAL)
-        return copysignf(0.0f, result);
-    return result;
-}
-
-static f64 force_double(CPUState* cpu, f64 value) {
-    if ((cpu->fpscr & FPSCR_NI) && fpclassify(value) == FP_SUBNORMAL)
-        return copysign(0.0, value);
-    return value;
-}
-
-static void clear_fi_fr(CPUState* cpu) {
-    cpu->fpscr &= ~(FPSCR_FI | FPSCR_FR);
-}
-
-static void set_fi_fr(CPUState* cpu, f64 exact, f64 rounded) {
-    clear_fi_fr(cpu);
-    if (isnan(exact) || exact == rounded)
-        return;
-    set_fp_exception(cpu, FPSCR_XX);
-    cpu->fpscr |= FPSCR_FI;
-    if (fabs(rounded) > fabs(exact))
-        cpu->fpscr |= FPSCR_FR;
-}
-
-static FPBinaryResult binary_fp(CPUState* cpu, FPBinaryOp op, f64 a, f64 b) {
-    FPBinaryResult result = {0};
-    switch (op) {
-    case FP_ADD: result.value = a + b; break;
-    case FP_SUB: result.value = a - b; break;
-    case FP_MUL: result.value = a * b; break;
-    case FP_DIV: result.value = a / b; break;
-    }
-
-    if (op == FP_DIV && isinf(result.value) && b == 0.0) {
-        result.exception = FPSCR_ZX;
-    } else if (isnan(result.value)) {
-        if (is_snan(a) || is_snan(b))
-            result.exception = FPSCR_VXSNAN;
-        clear_fi_fr(cpu);
-
-        if (isnan(a))
-            result.value = quiet_nan(a);
-        else if (isnan(b))
-            result.value = quiet_nan(b);
-        else if (op == FP_MUL) {
-            result.value = f64_value(0x7FF8000000000000ull);
-            result.exception = FPSCR_VXIMZ;
-        } else if (op == FP_DIV) {
-            result.value = f64_value(0x7FF8000000000000ull);
-            result.exception = b == 0.0 ? FPSCR_VXZDZ : FPSCR_VXIDI;
-        } else {
-            result.value = f64_value(0x7FF8000000000000ull);
-            result.exception = FPSCR_VXISI;
-        }
-    } else if ((op == FP_ADD || op == FP_SUB) && (isinf(a) || isinf(b))) {
-        clear_fi_fr(cpu);
-    }
-
-    if (result.exception)
-        set_fp_exception(cpu, result.exception);
-    return result;
-}
-
-static bool binary_result_enabled(const CPUState* cpu, FPBinaryResult result) {
-    const u32 invalid = FPSCR_VXSNAN | FPSCR_VXISI | FPSCR_VXIDI |
-                        FPSCR_VXZDZ | FPSCR_VXIMZ;
-    if ((result.exception & invalid) && (cpu->fpscr & FPSCR_VE))
-        return false;
-    if (result.exception == FPSCR_ZX && (cpu->fpscr & FPSCR_ZE))
-        return false;
-    return true;
-}
-
-static void write_single_result(CPUState* cpu, u8 d, f32 value) {
-    cpu->fpr[d] = (f64)value;
-    cpu->ps1[d] = (f64)value;
-    set_fprf(cpu, classify_f32(value));
-}
-
-static void binary_single(CPUState* cpu, u8 d, f64 a, f64 b, FPBinaryOp op) {
-    FPBinaryResult result = binary_fp(cpu, op, a, b);
-    if (!binary_result_enabled(cpu, result))
-        return;
-    f32 rounded = force_single(cpu, result.value);
-    if (isfinite(result.value))
-        set_fi_fr(cpu, result.value, (f64)rounded);
-    write_single_result(cpu, d, rounded);
-}
-
-static void binary_double(CPUState* cpu, u8 d, f64 a, f64 b, FPBinaryOp op) {
-    FPBinaryResult result = binary_fp(cpu, op, a, b);
-    if (!binary_result_enabled(cpu, result))
-        return;
-    cpu->fpr[d] = force_double(cpu, result.value);
-    if (op == FP_MUL)
-        clear_fi_fr(cpu);
-    set_fprf(cpu, classify_f64(cpu->fpr[d]));
-}
-
-void ppc_fadds(CPUState* cpu, u8 d, u8 a, u8 b) {
-    binary_single(cpu, d, cpu->fpr[a], cpu->fpr[b], FP_ADD);
-}
-
-void ppc_fsubs(CPUState* cpu, u8 d, u8 a, u8 b) {
-    binary_single(cpu, d, cpu->fpr[a], cpu->fpr[b], FP_SUB);
-}
-
-void ppc_fmuls(CPUState* cpu, u8 d, u8 a, u8 c) {
-    binary_single(cpu, d, cpu->fpr[a], force_25_bit(cpu->fpr[c]), FP_MUL);
-}
-
-void ppc_fdivs(CPUState* cpu, u8 d, u8 a, u8 b) {
-    binary_single(cpu, d, cpu->fpr[a], cpu->fpr[b], FP_DIV);
-}
-
-void ppc_fadd(CPUState* cpu, u8 d, u8 a, u8 b) {
-    binary_double(cpu, d, cpu->fpr[a], cpu->fpr[b], FP_ADD);
-}
-
-void ppc_fsub(CPUState* cpu, u8 d, u8 a, u8 b) {
-    binary_double(cpu, d, cpu->fpr[a], cpu->fpr[b], FP_SUB);
-}
-
-void ppc_fmul(CPUState* cpu, u8 d, u8 a, u8 c) {
-    binary_double(cpu, d, cpu->fpr[a], cpu->fpr[c], FP_MUL);
-}
-
-void ppc_fdiv(CPUState* cpu, u8 d, u8 a, u8 b) {
-    binary_double(cpu, d, cpu->fpr[a], cpu->fpr[b], FP_DIV);
-}
-
-void ppc_frsp(CPUState* cpu, u8 d, u8 b) {
-    f64 value = cpu->fpr[b];
-    f32 rounded = force_single(cpu, value);
-    if (isnan(value)) {
-        bool snan = is_snan(value);
-        if (snan)
-            set_fp_exception(cpu, FPSCR_VXSNAN);
-        clear_fi_fr(cpu);
-        if (snan && (cpu->fpscr & FPSCR_VE))
-            return;
-    } else {
-        set_fi_fr(cpu, value, (f64)rounded);
-    }
-    write_single_result(cpu, d, rounded);
-}
-
-/* Paired-single binary arithmetic. Previously emitted inline per lane as
- * dolrecomp_ps_round((f32)a OP (f32)b), which dropped FPRF entirely and -- for
- * ps_mul -- skipped the Gekko's 25-bit truncation of the C operand on BOTH
- * lanes. Ported from upstream DolRecomp 44f3fdb; paired-single is the SIMD unit
- * the vertex and matrix maths run on, so these lanes are load-bearing for
- * geometry. The scalar single-precision helpers above are what stop ps1 going
- * stale in the first place; these keep the paired ops themselves exact. */
-static void write_paired_result(CPUState* cpu, u8 d, f64 ps0, f64 ps1) {
-    cpu->fpr[d] = (f64)(f32)ps0;
-    cpu->ps1[d] = (f64)(f32)ps1;
-    set_fprf(cpu, classify_f32((f32)ps0));
-}
-
-static f64 paired_binary_nan(f64 a, f64 b, f64 result) {
-    if (isnan(a))
-        return quiet_nan(a);
-    if (isnan(b))
-        return quiet_nan(b);
-    if (isnan(result))
-        return f64_value(0x7FF8000000000000ull);
-    return result;
-}
-
-void ppc_ps_add_op(CPUState* cpu, u8 d, u8 a, u8 b) {
-    write_paired_result(cpu, d,
-                        paired_binary_nan(cpu->fpr[a], cpu->fpr[b],
-                                          cpu->fpr[a] + cpu->fpr[b]),
-                        paired_binary_nan(cpu->ps1[a], cpu->ps1[b],
-                                          cpu->ps1[a] + cpu->ps1[b]));
-}
-
-void ppc_ps_sub_op(CPUState* cpu, u8 d, u8 a, u8 b) {
-    write_paired_result(cpu, d,
-                        paired_binary_nan(cpu->fpr[a], cpu->fpr[b],
-                                          cpu->fpr[a] - cpu->fpr[b]),
-                        paired_binary_nan(cpu->ps1[a], cpu->ps1[b],
-                                          cpu->ps1[a] - cpu->ps1[b]));
-}
-
-void ppc_ps_mul_op(CPUState* cpu, u8 d, u8 a, u8 c) {
-    f64 c0 = force_25_bit(cpu->fpr[c]);
-    f64 c1 = force_25_bit(cpu->ps1[c]);
-    write_paired_result(cpu, d,
-                        paired_binary_nan(cpu->fpr[a], cpu->fpr[c],
-                                          cpu->fpr[a] * c0),
-                        paired_binary_nan(cpu->ps1[a], cpu->ps1[c],
-                                          cpu->ps1[a] * c1));
-}
-
-void ppc_ps_div_op(CPUState* cpu, u8 d, u8 a, u8 b) {
-    write_paired_result(cpu, d,
-                        paired_binary_nan(cpu->fpr[a], cpu->fpr[b],
-                                          cpu->fpr[a] / cpu->fpr[b]),
-                        paired_binary_nan(cpu->ps1[a], cpu->ps1[b],
-                                          cpu->ps1[a] / cpu->ps1[b]));
 }

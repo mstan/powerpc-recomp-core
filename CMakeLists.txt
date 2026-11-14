@@ -50,6 +50,20 @@ endif()
 
 set(DOLRECOMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+# Preserve the host's CPUState header before providing the optional semantics.
+# Unknown compiler profiles keep the functioning out-of-line implementation.
+add_library(dr_fp_inline INTERFACE)
+target_include_directories(dr_fp_inline SYSTEM INTERFACE ${DOLRECOMP_SRC})
+if(MSVC)
+    target_compile_definitions(dr_fp_inline INTERFACE DOLRECOMP_INLINE_FP=1)
+    target_compile_options(dr_fp_inline INTERFACE /fp:strict)
+elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_definitions(dr_fp_inline INTERFACE DOLRECOMP_INLINE_FP=1)
+    target_compile_options(dr_fp_inline INTERFACE -ffp-contract=off)
+else()
+    target_compile_definitions(dr_fp_inline INTERFACE DOLRECOMP_INLINE_FP=0)
+endif()
+
 add_library(dr_cpu STATIC src/cpu/cpu.c)
 target_include_directories(dr_cpu PUBLIC ${DOLRECOMP_SRC})
 if(NOT WIN32)
@@ -213,6 +227,26 @@ target_include_directories(test_c_execute_fp_scope PRIVATE ${DOLRECOMP_SRC})
 target_compile_definitions(test_c_execute_fp_scope PRIVATE DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
 target_link_libraries(test_c_execute_fp_scope PRIVATE dr_cpu)
 add_test(NAME c_execute_fp_scope COMMAND test_c_execute_fp_scope)
+
+add_executable(test_c_execute_fp_inline tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_link_libraries(test_c_execute_fp_inline PRIVATE dr_cpu dr_fp_inline)
+target_compile_definitions(test_c_execute_fp_inline PRIVATE DOLRECOMP_OBSERVE_CYCLES=1 DOLRECOMP_FP_GUARD_SCOPE=1)
+add_test(NAME c_execute_fp_inline COMMAND test_c_execute_fp_inline)
+
+add_executable(test_fp_inline tests/test_fp_inline.c)
+target_link_libraries(test_fp_inline PRIVATE dr_cpu dr_fp_inline)
+add_test(NAME fp_inline_exact COMMAND test_fp_inline)
+
+add_executable(test_fp_inline_fallback tests/test_fp_inline.c)
+target_compile_definitions(test_fp_inline_fallback PRIVATE DOLRECOMP_INLINE_FP=0)
+target_link_libraries(test_fp_inline_fallback PRIVATE dr_cpu)
+add_test(NAME fp_inline_fallback COMMAND test_fp_inline_fallback)
+
+foreach(_fp_test fpscr float_semantics)
+    add_executable(test_${_fp_test}_inline tests/test_${_fp_test}.c)
+    target_link_libraries(test_${_fp_test}_inline PRIVATE dr_cpu dr_fp_inline)
+    add_test(NAME ${_fp_test}_inline COMMAND test_${_fp_test}_inline)
+endforeach()
 
 # Both variants use the same emitted memory fixtures and cycle observation.
 foreach(_mem2_mode reference inline)

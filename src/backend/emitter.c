@@ -788,6 +788,12 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "#include <string.h>\n"
         "#include <math.h>\n"
         "#include \"cpu/cpu.h\"\n"
+        "#ifndef DOLRECOMP_INLINE_FP\n"
+        "#define DOLRECOMP_INLINE_FP 0\n"
+        "#endif\n"
+        "#if DOLRECOMP_INLINE_FP\n"
+        "#include \"cpu/fp_binary.h\"\n"
+        "#endif\n"
         /* The store fast paths below call gcn_ring_watch_check -- the always-on
          * write-watch ring. That instrument lives in the RUNTIME, but generated
          * code must also compile standalone: the recompiler's own codegen tests
