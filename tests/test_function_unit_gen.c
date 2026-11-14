@@ -42,8 +42,13 @@ int main(int argc,char** argv) {
     /* A live register crosses the original page boundary. */
     const u32 pages[]={0x38630001u,0x7c833214u,0x38e40002u,
         0x90e50000u,0x81250004u,0x7d491a14u,0x4e800020u};
+    /* A complete ordinary MEM2 read must stay in the function even when
+     * optional MEM2 inline lowering is disabled. The loop crosses a page. */
+    const u32 reads[]={0x81250000u,0x7cc64a14u,0x38630001u,
+        0x2c030004u,0x4180fff0u,0x4e800020u};
     int ok=fixture(out,0x80006000u,integer,sizeof integer/sizeof *integer) &&
         fixture(out,0x80006200u,fp,sizeof fp/sizeof *fp) &&
-        fixture(out,0x80006ff8u,pages,sizeof pages/sizeof *pages);
+        fixture(out,0x80006ff8u,pages,sizeof pages/sizeof *pages) &&
+        fixture(out,0x80007ff8u,reads,sizeof reads/sizeof *reads);
     fclose(out);return !ok;
 }
