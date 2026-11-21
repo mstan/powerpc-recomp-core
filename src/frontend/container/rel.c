@@ -261,18 +261,17 @@ static int apply_relocation(RELSection* section, u32 offset, u32 patch_address,
     }
 }
 
-bool rel_apply_relocations(RELFile* rel, const RELModuleMap* modules) {
+bool rel_visit_relocations(const RELFile* rel,RELRelocationVisitor visit,void* user) {
     u32 relocation_offset;
     u32 import_offset;
     u32 import_size;
 
-    if (!rel)
+    if (!rel || !visit)
         return false;
 
     relocation_offset = rel->relocation_offset;
     import_offset = rel->import_offset;
     import_size = rel->import_size;
-    rel->relocation_count = 0;
 
     if (import_size == 0)
         return true;
@@ -282,8 +281,8 @@ bool rel_apply_relocations(RELFile* rel, const RELModuleMap* modules) {
         return false;
     }
 
-    rel->import_count = import_size / REL_IMPORT_ENTRY_SIZE;
-    for (u32 import_index = 0; import_index < rel->import_count; import_index++) {
+    const u32 import_count = import_size / REL_IMPORT_ENTRY_SIZE;
+    for (u32 import_index = 0; import_index < import_count; import_index++) {
         const u8* import = rel->file_data + import_offset +
                            import_index * REL_IMPORT_ENTRY_SIZE;
         u32 import_module = read_be32(import);
@@ -336,18 +335,11 @@ bool rel_apply_relocations(RELFile* rel, const RELModuleMap* modules) {
                 return 0;
             }
 
-            RELSection* patch_section = &rel->sections[current_section_index];
-            u32 target;
-            u32 patch_address;
-            if (!relocation_target(rel, modules, import_module, section_index,
-                                   symbol_offset, &target) ||
-                !section_address_at(rel, current_section_index, current_offset,
-                                    &patch_address) ||
-                !apply_relocation(patch_section, current_offset, patch_address,
-                                  type, target)) {
+            const RELRelocation relocation={import_module,current_section_index,current_offset,
+                                            section_index,symbol_offset,type};
+            if(!visit(user,&relocation)) {
                 return false;
             }
-            rel->relocation_count++;
         }
 
         if (!saw_end) {
@@ -358,6 +350,28 @@ bool rel_apply_relocations(RELFile* rel, const RELModuleMap* modules) {
     }
 
     return true;
+}
+
+typedef struct {RELFile* rel;const RELModuleMap* modules;} RelocationApply;
+static bool apply_visited_relocation(void* user,const RELRelocation* patch) {
+    const RelocationApply* apply=user;
+    RELFile* rel=apply->rel;
+    u32 target, address;
+    if(!relocation_target(rel,apply->modules,patch->module_id,patch->target_section,
+                           patch->target_offset,&target) ||
+       !section_address_at(rel,patch->section,patch->offset,&address) ||
+       !apply_relocation(rel->sections+patch->section,patch->offset,address,patch->type,target))
+        return false;
+    ++rel->relocation_count;
+    return true;
+}
+
+bool rel_apply_relocations(RELFile* rel,const RELModuleMap* modules) {
+    if(!rel)return false;
+    rel->import_count=rel->import_size/REL_IMPORT_ENTRY_SIZE;
+    rel->relocation_count=0;
+    RelocationApply apply={rel,modules};
+    return rel_visit_relocations(rel,apply_visited_relocation,&apply);
 }
 
 bool rel_load_image(RELFile* rel, const char* path, u32 base_address) {

@@ -81,12 +81,14 @@ endif()
 add_library(dr_analysis STATIC
     src/analysis/embedded_data.c
     src/analysis/smc.c
+    src/analysis/native_functions.c
 )
 target_include_directories(dr_analysis PUBLIC ${DOLRECOMP_SRC})
 target_link_libraries(dr_analysis PUBLIC dr_frontend)
 
 add_library(dr_backend STATIC
     src/backend/emitter.c
+    src/backend/native_function_emit.c
     src/backend/ppc_cycles.c
     src/backend/dispatch.c
     src/backend/codegen.c
@@ -100,6 +102,8 @@ endif()
 add_library(dr_app STATIC
     src/app/cli.c
     src/app/database.c
+    src/app/native_function.c
+    src/app/native_function_rel.c
     src/app/setup.c
     src/app/paths.c
     src/app/pipeline.c
@@ -205,6 +209,23 @@ add_executable(test_c_execute
 target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
+
+add_executable(test_native_function_emit tests/test_native_function_emit.c)
+target_link_libraries(test_native_function_emit PRIVATE dr_backend)
+set(DR_NATIVE_TEST_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/native_function_generated.c)
+add_custom_command(
+    OUTPUT ${DR_NATIVE_TEST_SOURCE}
+    COMMAND test_native_function_emit ${DR_NATIVE_TEST_SOURCE}
+    DEPENDS test_native_function_emit
+    VERBATIM
+)
+add_executable(test_native_function_execute tests/test_native_function_execute.c
+    ${DR_NATIVE_TEST_SOURCE} src/backend/native_function_memory.c)
+target_include_directories(test_native_function_execute PRIVATE ${DOLRECOMP_SRC})
+if(NOT WIN32)
+    target_link_libraries(test_native_function_execute PRIVATE m)
+endif()
+add_test(NAME native_function_execute COMMAND test_native_function_execute)
 
 # Phase D2 (codegen speed campaign): real link+execute exactness proof for
 # the in-chunk bl/blr shadow-call-stack fast path (emitter.c's

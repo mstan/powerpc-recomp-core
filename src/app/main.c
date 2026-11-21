@@ -3,6 +3,7 @@
 #include "app/setup.h"
 #include "app/database.h"
 #include "app/paths.h"
+#include "app/native_function.h"
 #include "app/pipeline.h"
 #include "platform/fs.h"
 #include "platform/strutil.h"
@@ -18,6 +19,10 @@
 int main(int argc, char** argv) {
     if (argc > 1 && strcmp(argv[1], "extract") == 0)
         return disc_extract_main(argc - 1, argv + 1);
+    if (argc > 1 && strcmp(argv[1], "function-native") == 0)
+        return dr_native_function_main(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "function-native-rel") == 0)
+        return dr_native_function_rel_main(argc,argv);
 
     CliOptions opts;
     if (!parse_cli(argc, argv, &opts))
