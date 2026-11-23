@@ -18,7 +18,7 @@ _Static_assert(NativeControlBase + 5 <= 64, "Native register effect mask too nar
 
 typedef struct {
     u32 gpr, fpr;
-    bool floating;
+    bool floating, saving_thread;
     u64 dirty;
 } NativeRegisters;
 
@@ -70,10 +70,17 @@ static void emit_publish(FILE* out, const NativeRegisters* regs) {
     }
 }
 
+static void emit_resume_check(FILE* out,const NativeRegisters* regs) {
+    if(regs->saving_thread)
+        fputs("    if (cpu->resume == &saved_context) goto dr_native_resume_thread;\n",out);
+    fputs("    if (cpu->resume) return;\n",out);
+}
+
 static void emit_fuel_check(FILE* out, u32 pc, const NativeRegisters* regs) {
     fputs("    if (work >= cpu->deadline) {\n", out);
     emit_publish(out,regs);
     fprintf(out, "    cpu->service(cpu, DR_NATIVE_GUEST_PC(0x%08Xu));\n", pc);
+    emit_resume_check(out,regs);
     emit_reload(out,regs);
     fputs("    }\n", out);
 }
@@ -474,9 +481,12 @@ static void emit_body(FILE* out, const PPCInst* in, bool checked, const NativeRe
         fputs("    {\n", out);
         emit_publish(out,regs);
         fprintf(out, "    if (!cpu->system) dr_native_fault(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), 0x%08Xu);\n"
-                     "    u32 target = cpu->system(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), DR_NATIVE_RFI, 0, 0);\n"
-                     "    if (target) dr_native_linked(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), target)(cpu, mem);\n"
-                     "    return; }\n", in->address, in->raw, in->address, in->address);
+                     "    u32 target = cpu->system(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), DR_NATIVE_RFI, 0, 0);\n",
+                in->address,in->raw,in->address);
+        emit_resume_check(out,regs);
+        fprintf(out,"    if (target) dr_native_linked(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), target)(cpu, mem);\n",in->address);
+        emit_resume_check(out,regs);
+        fputs("    return; }\n",out);
         return;
     case PPC_OP_LMW: case PPC_OP_STMW:
         emit_multi_memory(out, in, checked, immediate);
@@ -563,17 +573,21 @@ static void emit_transfer(FILE* out, const PPCInst* in, DrNativeTransfer edge,
                   "    for (unsigned reg=14;reg<32;++reg) saved_gpr[reg-14]=r[reg];\n",out);
             if(regs->floating)
                 fputs("    for (unsigned reg=14;reg<32;++reg) saved_fpr[reg-14]=f[reg];\n",out);
-            fputs("    bool resumed;\n    DR_NATIVE_CAPTURE_CONTEXT(saved_context, resumed);\n"
-                  "    if (resumed) {\n",out);
-            emit_reload(out,regs);
-            fputs("    for (unsigned reg=14;reg<32;++reg) r[reg]=saved_gpr[reg-14];\n",out);
-            if(regs->floating)
-                fputs("    for (unsigned reg=14;reg<32;++reg) f[reg]=saved_fpr[reg-14];\n",out);
-            fputs("    r[3]=1;\n    } else {\n",out);
         }
         fprintf(out, "    { extern void dr_native_%08X(DrNativeCpu*, u8*);\n", edge.target);
         emit_publish(out,regs);
-        fprintf(out, "    dr_native_%08X(cpu, mem); }\n", edge.target);
+        if(in->address==emission->thp_call_site) {
+            fprintf(out,"#ifdef GCNLLR_NATIVE_THP_VIDEO\n"
+                        "    extern void dr_native_thp_video(DrNativeCpu*,u32);\n"
+                        "    dr_native_thp_video(cpu,r[%u]);\n"
+                        "#else\n",emission->thp_length_register);
+            fprintf(out,"    dr_native_%08X(cpu, mem);\n#endif\n    }\n",edge.target);
+        } else {
+            fprintf(out, "    dr_native_%08X(cpu, mem); }\n", edge.target);
+        }
+        if(edge.kind==DR_NATIVE_CALL_FUNCTION || regs->saving_thread ||
+           emission->rel_action!=DR_NATIVE_REL_NO_TRANSITION)
+            emit_resume_check(out,regs);
         if (edge.kind == DR_NATIVE_BRANCH_FUNCTION)
             emit_return(out,in,emission->rel_action);
         else
@@ -581,7 +595,7 @@ static void emit_transfer(FILE* out, const PPCInst* in, DrNativeTransfer edge,
         if(in->address==emission->thread_save_site) {
             fprintf(out,"    if (!cpu->thread_save) dr_native_fault(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), context);\n"
                         "    cpu->thread_save(cpu,context,DR_NATIVE_GUEST_PC(0x%08Xu),&saved_context,r);\n"
-                        "    }}\n",in->address,in->address+4u);
+                        "    }\n",in->address,in->address+4u);
         }
         break;
     case DR_NATIVE_RETURN:
@@ -600,6 +614,9 @@ static void emit_transfer(FILE* out, const PPCInst* in, DrNativeTransfer edge,
             emit_local_switch(out,in->address,emission->local_targets,emission->target_count,regs);
         emit_publish(out,regs);
         fprintf(out, "    dr_native_linked(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), target)(cpu, mem);\n", in->address);
+        if(edge.kind==DR_NATIVE_CALL_INDIRECT || regs->saving_thread ||
+           emission->rel_action!=DR_NATIVE_REL_NO_TRANSITION)
+            emit_resume_check(out,regs);
         if (edge.kind == DR_NATIVE_BRANCH_INDIRECT)
             emit_return(out,in,emission->rel_action);
         else
@@ -636,6 +653,7 @@ static void emit_relocated_branch(FILE* out,const PPCInst* in,const DrNativeRelo
     }
     emit_publish(out,regs);
     fputs("    dr_native_linked(cpu, site, target)(cpu, mem); }\n", out);
+    if(in->lk || regs->saving_thread)emit_resume_check(out,regs);
     if (in->lk)
         emit_reload(out,regs);
     else
@@ -758,6 +776,13 @@ bool dr_emit_native_function(FILE* out, const DrNativeSymbols* symbols,
     const bool saving_thread=emission->thread_save_site>=function->address &&
         emission->thread_save_site-function->address<function->size;
     if (saving_thread) {
+        const u32 resume_index=(emission->thread_save_site-function->address)/4u+1u;
+        if(resume_index>=count) {
+            free(leaders);
+            return false;
+        }
+        leaders[resume_index]|=BLOCK_START|BRANCH_TARGET;
+        registers.saving_thread=true;
         registers.gpr=UINT32_MAX;
         if (registers.floating)registers.fpr=UINT32_MAX;
     }
@@ -776,6 +801,7 @@ bool dr_emit_native_function(FILE* out, const DrNativeSymbols* symbols,
                     "void dr_native_%08X(DrNativeCpu* cpu,u8* mem) {\n"
                     "    if(cpu->observe_entry)cpu->observe_entry(cpu,DR_NATIVE_GUEST_PC(0x%08Xu));\n"
                     "    dr_native_body_%08X(cpu,mem);\n"
+                    "    if (cpu->resume) return;\n"
                     "    if(cpu->observe_entry)cpu->observe_entry(cpu,DR_NATIVE_GUEST_PC(0x%08Xu)|1u);\n"
                     "}\n"
                     "static void dr_native_body_%08X(DrNativeCpu* cpu,u8* mem) {\n",
@@ -789,8 +815,8 @@ bool dr_emit_native_function(FILE* out, const DrNativeSymbols* symbols,
     if (regs->floating)
         fputs("    DrNativeFloat f[32]={0};\n    u32 fpscr;\n",out);
     if(saving_thread) {
-        fputs("    jmp_buf saved_context;\n    volatile u32 saved_gpr[18];\n",out);
-        if(regs->floating)fputs("    volatile DrNativeFloat saved_fpr[18];\n",out);
+        fputs("    unsigned char saved_context;\n    u32 saved_gpr[18];\n",out);
+        if(regs->floating)fputs("    DrNativeFloat saved_fpr[18];\n",out);
     }
     emit_reload(out,regs);
     emit_fuel_check(out, function->address, regs);
@@ -819,6 +845,7 @@ bool dr_emit_native_function(FILE* out, const DrNativeSymbols* symbols,
             fprintf(out,"    if (!cpu->system) dr_native_fault(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), 0);\n"
                         "    (void)cpu->system(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), DR_NATIVE_WAIT_TB_LOW, 0, r[%u]);\n",
                     in->address,in->address,emission->wait_target_register);
+            emit_resume_check(out,regs);
             emit_reload(out,regs);
         }
         const u32 relocation_pc=next_relocation<relocation_count ?
@@ -845,8 +872,19 @@ bool dr_emit_native_function(FILE* out, const DrNativeSymbols* symbols,
         else
             emit_transfer(out,in,edge,emission,regs);
     }
-    fprintf(out, "    dr_native_fault(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), 0);\n}\n",
-            function->address + function->size);
+    fprintf(out, "    dr_native_fault(cpu, DR_NATIVE_GUEST_PC(0x%08Xu), 0);\n",
+             function->address + function->size);
+    if (saving_thread) {
+        fputs("dr_native_resume_thread: ;\n"
+              "    cpu->resume = NULL;\n"
+              "    if (cpu->resume_landed) cpu->resume_landed(cpu);\n",out);
+        emit_reload(out,regs);
+        fputs("    for (unsigned reg=14;reg<32;++reg) r[reg]=saved_gpr[reg-14];\n",out);
+        if(regs->floating)
+            fputs("    for (unsigned reg=14;reg<32;++reg) f[reg]=saved_fpr[reg-14];\n",out);
+        fprintf(out,"    r[3]=1;\n    goto loc_%08X;\n",emission->thread_save_site+4u);
+    }
+    fputs("}\n",out);
     free(flow);
     free(leaders);
     return !ferror(out);

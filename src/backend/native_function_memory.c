@@ -1,11 +1,5 @@
 ﻿/* SPDX-License-Identifier: MIT */
 #include "backend/native_function_abi.h"
-#include "backend/native_context.h"
-
-#ifdef DR_NATIVE_COMPACT_CONTEXT
-bool dr_native_use_compact_context;
-_Static_assert(sizeof(jmp_buf)>=5u*sizeof(void*),"compact context buffer is too small");
-#endif
 
 #if defined(__GNUC__) || defined(__clang__)
 #define DR_NATIVE_SLOW __attribute__((cold,noinline))

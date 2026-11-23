@@ -3,7 +3,6 @@
 #define DOLRECOMP_NATIVE_FUNCTION_ABI_H
 
 #include "common/types.h"
-#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,6 +12,8 @@
 #define DR_NATIVE_GUEST_PC(pc) (pc)
 #define DR_NATIVE_CANONICAL_PC(pc) (pc)
 #endif
+
+#define DR_NATIVE_FUNCTION_ABI_VERSION 2u
 
 typedef struct DrNativeCpu DrNativeCpu;
 typedef void (*DrNativeFunction)(DrNativeCpu*, u8* mem);
@@ -70,7 +71,10 @@ struct DrNativeCpu {
     bool direct_stores;
     void (*service)(DrNativeCpu*, u32 pc);
     void (*observe_entry)(DrNativeCpu*, u32 pc);
-    void (*thread_save)(DrNativeCpu*,u32 context,u32 resume_pc,jmp_buf*,const u32* gpr);
+    /* A pending resume identifies one live continuation on the active fiber. */
+    void* resume;
+    void (*resume_landed)(DrNativeCpu*);
+    void (*thread_save)(DrNativeCpu*,u32 context,u32 resume_pc,void* continuation,const u32* gpr);
     void (*rel_transition)(DrNativeCpu*,u32 pc,u32 module_header,bool linked);
     u32 (*read)(DrNativeCpu*, u32 address, unsigned size);
     void (*write)(DrNativeCpu*, u32 address, unsigned size, u32 value);

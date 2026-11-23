@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
     const u32 stack_span = 0x80003a00;
     const u32 shortened_deadline=0x80003b00;
     const u32 register_merge = 0x80003e00, register_writer = 0x80003f00, register_observer = 0x80004000;
+    const u32 scheduler=0x80004100, resume_dispatch=0x80004140;
     DrNativeSymbol entries[] = {
         {caller, 32, DR_NATIVE_FUNCTION, 0},
         {callee, 8, DR_NATIVE_FUNCTION, 0},
@@ -34,6 +35,8 @@ int main(int argc, char** argv) {
         {register_writer, 8, DR_NATIVE_FUNCTION, 0},
         {register_observer, 4, DR_NATIVE_FUNCTION, 0},
         {shortened_deadline, 20, DR_NATIVE_FUNCTION, 0},
+        {scheduler, 32, DR_NATIVE_FUNCTION, 0},
+        {resume_dispatch, 12, DR_NATIVE_FUNCTION, 0},
     };
     DrNativeSymbols symbols = {entries, sizeof(entries)/sizeof(*entries)};
     const u32 call_word = 0x48000001u | (callee - (caller+8));
@@ -120,6 +123,24 @@ int main(int argc, char** argv) {
         dr_emit_native_function(out,&symbols,&entries[13],writer_code,&plain) &&
         dr_emit_native_function(out,&symbols,&entries[14],&observer_code,&watched) &&
         dr_emit_native_function(out,&symbols,&entries[15],observed_loop,&checked);
+    const PPCInst scheduler_code[]={
+        ppc_decode(0x39c01234, scheduler),
+        ppc_decode(0x48000001u|((callee-(scheduler+4u))&0x03fffffcu),scheduler+4u),
+        ppc_decode(0x2c030000, scheduler+8u),
+        ppc_decode(0x4082000c, scheduler+12u),
+        ppc_decode(0x39c06789, scheduler+16u),
+        ppc_decode(0x48000001u|(resume_dispatch-(scheduler+20u)),scheduler+20u),
+        ppc_decode(0x7dc37378, scheduler+24u),
+        ppc_decode(0x4e800020, scheduler+28u),
+    };
+    const PPCInst dispatch_code[]={
+        ppc_decode(0x48000001u|((interrupt_return-resume_dispatch)&0x03fffffcu),resume_dispatch),
+        ppc_decode(0x38e00073, resume_dispatch+4u),
+        ppc_decode(0x4e800020, resume_dispatch+8u),
+    };
+    const DrNativeEmission thread_save={.thread_save_site=scheduler+4u};
+    emitted=emitted && dr_emit_native_function(out,&symbols,&entries[16],scheduler_code,&thread_save) &&
+        dr_emit_native_function(out,&symbols,&entries[17],dispatch_code,&plain);
     const PPCInst relocated_code[]={ppc_decode(0x38600000,relocated),
         ppc_decode(0x48000001,relocated+4u),ppc_decode(0x4e800020,relocated+8u)};
     const DrNativeRelocation relocations[]={

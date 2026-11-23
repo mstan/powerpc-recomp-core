@@ -24,6 +24,8 @@ typedef struct {
     DrNativeRelAction rel_action;
     u32 timebase_wait;
     u32 thread_save_site;
+    u32 thp_call_site;
+    u8 thp_length_register;
     u8 wait_target_register;
 } DrNativeEmission;
 

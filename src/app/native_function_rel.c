@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#include "backend/native_function_abi.h"
 #include "app/native_function.h"
 #include "backend/native_function_emit.h"
 #include "frontend/container/rel.h"
@@ -114,8 +115,9 @@ static bool emit_rel(const RelEmission* data,const DrNativeSymbols* symbols,cons
     unsigned shard_count=0,shard_words=0;
     size_t next=0,functions=0,total_targets=0;
     if(ok) {
-        fprintf(manifest,"list(APPEND DR_NATIVE_REL_MODULES %u)\nlist(APPEND DR_NATIVE_REL_SOURCES\n"
-                         "    \"${CMAKE_CURRENT_LIST_DIR}/native_rel_catalog.c\"\n",id);
+        fprintf(manifest,"list(APPEND DR_NATIVE_REL_MODULES %u)\n"
+                         "list(APPEND DR_NATIVE_REL_ABIS %u)\nlist(APPEND DR_NATIVE_REL_SOURCES\n"
+                         "    \"${CMAKE_CURRENT_LIST_DIR}/native_rel_catalog.c\"\n",id,DR_NATIVE_FUNCTION_ABI_VERSION);
         fprintf(catalog,"#include \"backend/native_function_abi.h\"\n\nu32 dr_native_rel_bias_%u;\n",id);
         emit_rel_words(catalog,data);
     }

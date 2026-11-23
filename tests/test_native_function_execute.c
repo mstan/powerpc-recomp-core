@@ -13,6 +13,7 @@ void dr_native_80003900(DrNativeCpu*, u8*);
 void dr_native_80003B00(DrNativeCpu*, u8*);
 void dr_native_80003E00(DrNativeCpu*, u8*);
 void dr_native_C1003000(DrNativeCpu*, u8*);
+void dr_native_80004100(DrNativeCpu*, u8*);
 
 static void service(DrNativeCpu* cpu, u32 pc) {
     unsigned* calls = cpu->host;
@@ -181,7 +182,50 @@ static bool native_register_merge(void) {
     return true;
 }
 
+typedef struct {
+    void* continuation;
+    unsigned saves,resumes;
+} ResumeProbe;
+
+static void save_probe(DrNativeCpu* cpu,u32 context,u32 pc,void* continuation,const u32* registers) {
+    ResumeProbe* probe=cpu->host;
+    if(context!=(u32)-5 || pc!=0x80004108u || !continuation || registers[14]!=0x1234u) {
+        fprintf(stderr,"bad scheduler save: context=%08x pc=%08x r14=%08x\n",context,pc,registers[14]);
+        abort();
+    }
+    ++probe->saves;
+    probe->continuation=continuation;
+}
+
+static u32 resume_probe(DrNativeCpu* cpu,u32 pc,DrNativeSystemOp op,u32 selector,u32 value) {
+    ResumeProbe* probe=cpu->host;
+    if(pc!=0x80003700u || op!=DR_NATIVE_RFI || selector || value || !probe->continuation) {
+        fprintf(stderr,"bad scheduler resume: pc=%08x op=%u saved=%d\n",pc,(unsigned)op,probe->continuation!=NULL);
+        abort();
+    }
+    cpu->resume=probe->continuation;
+    probe->continuation=NULL;
+    return 0;
+}
+
+static void resume_landed_probe(DrNativeCpu* cpu) {
+    ResumeProbe* probe=cpu->host;
+    if(cpu->resume)abort();
+    ++probe->resumes;
+}
+
+static bool native_scheduler_resume(void) {
+    ResumeProbe probe={0};
+    DrNativeCpu cpu={.deadline=UINT64_MAX,.thread_save=save_probe,.system=resume_probe,
+                     .resume_landed=resume_landed_probe,.host=&probe};
+    cpu.gpr[3]=(u32)-5;
+    dr_native_80004100(&cpu,NULL);
+    return cpu.gpr[3]==0x1234 && cpu.gpr[7]==0 && !cpu.resume &&
+        !probe.continuation && probe.saves==1 && probe.resumes==1;
+}
+
 int main(void) {
+    if(!native_scheduler_resume())return 42;
     if (!native_mem1_access() || !native_double_access() || !native_observed_deadline() || !native_register_merge())
         return 1;
 

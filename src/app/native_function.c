@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#include "backend/native_function_abi.h"
 #include "app/native_function.h"
 #include "analysis/native_functions.h"
 #include "backend/native_function_emit.h"
@@ -10,6 +11,8 @@
 typedef struct {
     u32 observed,link,unlink,wait,thread_save,thread_rfi,display,overlay;
     u64 wait_digest,clock_digest;
+    u32 thp_call_site,thp_target;
+    u8 thp_length_register;
     u8 wait_target_register;
 } NativeHooks;
 
@@ -71,6 +74,16 @@ static bool verify_timebase_wait(const DOLFile* dol,const DrNativeSymbols* symbo
     if(!clock_code || code_digest(clock_code,clock->size)!=hooks->clock_digest)return false;
     hooks->wait_target_register=subtract.rA;
     return true;
+}
+
+static bool verify_thp_hook(const DOLFile* dol,const DrNativeSymbols* symbols,const NativeHooks* hooks) {
+    const DrNativeSymbol call={.address=hooks->thp_call_site,.size=4};
+    const u8* bytes=dol_code(dol,&call);
+    if(!bytes || !dr_native_function_containing(symbols,call.address))return false;
+    const PPCInst edge=ppc_decode(read_word(bytes),call.address);
+    const DrNativeSymbol* target=dr_native_symbol_at(symbols,hooks->thp_target);
+    return edge.op==PPC_OP_B && edge.lk && edge.branch_target==hooks->thp_target &&
+        target && target->kind==DR_NATIVE_FUNCTION;
 }
 
 static bool verify_thread_hooks(const DOLFile* dol,const DrNativeSymbols* symbols,const NativeHooks* hooks) {
@@ -244,6 +257,8 @@ static bool emit_function(FILE* out, const DOLFile* dol, const DrNativeSymbols* 
                     hooks->unlink==symbol->address ? DR_NATIVE_REL_UNLINK : DR_NATIVE_REL_NO_TRANSITION,
         .timebase_wait=hooks->wait,
         .thread_save_site=hooks->thread_save,
+        .thp_call_site=hooks->thp_call_site,
+        .thp_length_register=hooks->thp_length_register,
         .wait_target_register=hooks->wait_target_register,
     };
     return dr_emit_native_function_bytes(out,symbols,symbol,code,&emission);
@@ -265,6 +280,10 @@ static bool emit_dol(const DOLFile* dol, const DrNativeSymbols* symbols, const c
             return false;
         }
     }
+    if(hooks->thp_call_site && !verify_thp_hook(dol,symbols,hooks)) {
+        fprintf(stderr,"unexpected THP video call at %08X\n",hooks->thp_call_site);
+        return false;
+    }
     if(hooks->thread_save && !verify_thread_hooks(dol,symbols,hooks)) {
         fprintf(stderr,"unexpected SDK thread context bindings at %08X / %08X\n",
                 hooks->thread_save,hooks->thread_rfi);
@@ -283,7 +302,7 @@ static bool emit_dol(const DOLFile* dol, const DrNativeSymbols* symbols, const c
     bool ok = manifest && catalog;
     FILE* shard = NULL;
     size_t functions = 0;
-    unsigned shard_count = 0, shard_words = 0;
+    unsigned shard_count = 0, shard_words = 0, thp_shard = 0;
     if (ok) {
         fputs("set(DR_NATIVE_SOURCES\n    \"${CMAKE_CURRENT_LIST_DIR}/native_catalog.c\"\n", manifest);
         fputs("#include \"backend/native_function_abi.h\"\n\n", catalog);
@@ -314,11 +333,13 @@ static bool emit_dol(const DOLFile* dol, const DrNativeSymbols* symbols, const c
             }
             fprintf(manifest, "    \"${CMAKE_CURRENT_LIST_DIR}/%s\"\n", name);
             fputs("#include \"backend/native_function_fp.h\"\n", shard);
-            if (hooks->thread_save) fputs("#include \"backend/native_context.h\"\n", shard);
             fputc('\n', shard);
             shard_words = 0;
         }
         fprintf(catalog, "extern void dr_native_%08X(DrNativeCpu*, u8*);\n", symbol->address);
+        if(hooks->thp_call_site>=symbol->address &&
+           hooks->thp_call_site-symbol->address<symbol->size)
+            thp_shard=shard_count-1u;
         ok = emit_function(shard, dol, symbols, symbol, targets, target_count, hooks);
         shard_words += symbol->size / 4u;
         ++functions;
@@ -334,7 +355,9 @@ static bool emit_dol(const DOLFile* dol, const DrNativeSymbols* symbols, const c
                 "const u32 dr_native_dol_entry = 0x%08Xu;\n", functions, entry->address);
         write_code_identity(catalog, dol);
         fputs(")\n", manifest);
-        if (hooks->thread_save) fputs("set(DR_NATIVE_COMPACT_CONTEXT_BINDINGS ON)\n", manifest);
+        fprintf(manifest,"set(DR_NATIVE_FUNCTION_ABI %u)\n",DR_NATIVE_FUNCTION_ABI_VERSION);
+        if(hooks->thp_call_site)
+            fprintf(manifest,"set(DR_NATIVE_THP_SOURCE \"${CMAKE_CURRENT_LIST_DIR}/native_%04u.c\")\n",thp_shard);
     }
     if (shard && fclose(shard) != 0)
         ok = false;
@@ -369,9 +392,9 @@ static bool parse_digest(const char* input,u64* result) {
 }
 
 int dr_native_function_main(int argc, char** argv) {
-    if (argc!=5 && argc!=6 && argc!=8 && argc!=11 && argc!=13 && argc!=14 && argc!=15) {
+    if (argc!=5 && argc!=6 && argc!=8 && argc!=11 && argc!=13 && argc!=14 && argc!=15 && argc!=18) {
         fprintf(stderr,"usage: %s function-native DOL DTK_SYMBOLS OUTPUT_DIRECTORY"
-                       " [OBSERVED_ENTRY [REL_LINK REL_UNLINK [WAIT_ENTRY WAIT_DIGEST CLOCK_DIGEST [THREAD_SAVE THREAD_RFI [DISPLAY_ENTRY [OVERLAY_ENTRY]]]]]]\n",argv[0]);
+                       " [OBSERVED_ENTRY [REL_LINK REL_UNLINK [WAIT_ENTRY WAIT_DIGEST CLOCK_DIGEST [THREAD_SAVE THREAD_RFI [DISPLAY_ENTRY [OVERLAY_ENTRY [THP_CALL_SITE THP_TARGET THP_LENGTH_GPR]]]]]]]\n",argv[0]);
         return 1;
     }
     NativeHooks hooks={0};
@@ -383,8 +406,15 @@ int dr_native_function_main(int argc, char** argv) {
     if(argc>=13 && (!parse_hook(argv[11],&hooks.thread_save) ||
                     !parse_hook(argv[12],&hooks.thread_rfi)))return 1;
     if(argc>=14 && (!parse_hook(argv[13],&hooks.display) || hooks.display==hooks.observed))return 1;
-    if(argc==15 && (!parse_hook(argv[14],&hooks.overlay) || hooks.overlay==hooks.display ||
+    if(argc>=15 && (!parse_hook(argv[14],&hooks.overlay) || hooks.overlay==hooks.display ||
                    hooks.overlay==hooks.observed))return 1;
+    if(argc==18) {
+        u64 length_register;
+        if(!parse_hook(argv[15],&hooks.thp_call_site) || !parse_hook(argv[16],&hooks.thp_target) ||
+            !parse_digest(argv[17],&length_register) || length_register<14u || length_register>31u ||
+            hooks.thp_call_site==hooks.thread_save)return 1;
+        hooks.thp_length_register=(u8)length_register;
+    }
     DOLFile dol;
     if (!dol_load(&dol, argv[2]))
         return 1;
