@@ -841,7 +841,13 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
          * path call sites uninlined (gcc cold-call heuristics, documented in
          * runtime/CMakeLists.txt); forcing the issue is exact -- these
          * helpers are the hot path by construction. */
+        "#if defined(__GNUC__) || defined(__clang__)\n"
         "#define DR_MEM_INLINE static inline __attribute__((always_inline))\n"
+        "#elif defined(_MSC_VER)\n"
+        "#define DR_MEM_INLINE static __forceinline\n"
+        "#else\n"
+        "#define DR_MEM_INLINE static inline\n"
+        "#endif\n"
         "\n"
         "static inline u32 dolrecomp_rotl32(u32 value, u32 sh) {\n"
         "    sh &= 31u;\n"
