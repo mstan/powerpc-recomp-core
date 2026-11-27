@@ -181,6 +181,58 @@ int main(int argc, char** argv) {
     paired_overlap[3] = ppc_decode(0x4E800020u, BASE+0x108C);
     emit_function(out, paired_overlap, 4, BASE+0x1080);
 
+    /* Time-observing memory fixture: one native block, two device accesses,
+     * and a mid-block re-entry. The bus sees the instruction's cycle cursor. */
+    PPCInst timed[5];
+    timed[0]=ppc_decode(0x38630001u,BASE+0x1100); /* addi r3,r3,1 */
+    timed[1]=ppc_decode(0x80850000u,BASE+0x1104); /* lwz r4,0(r5) */
+    timed[2]=ppc_decode(0x38630001u,BASE+0x1108);
+    timed[3]=ppc_decode(0x90850004u,BASE+0x110c); /* stw r4,4(r5) */
+    timed[4]=ppc_decode(0x4e800020u,BASE+0x1110);
+    emit_function(out,timed,5,BASE+0x1100);
+
+    /* One guarded FP span plus the boundaries that must end its proof. The
+     * same existing execution harness runs default and scoped emission. */
+    const u32 adds=(59u<<26)|(3u<<21)|(1u<<16)|(2u<<11)|(21u<<1);
+    const u32 neg=(63u<<26)|(6u<<21)|(3u<<11)|(40u<<1);
+    const u32 fp_words[][10]={
+        {adds,(59u<<26)|(4u<<21)|(1u<<16)|(2u<<6)|(25u<<1),
+         (59u<<26)|(5u<<21)|(3u<<16)|(4u<<11)|(21u<<1),
+         (63u<<26)|(6u<<21)|(5u<<11)|(40u<<1),0x4e800020u},
+        {adds,0x7ca00124u,neg,0x4e800020u}, /* mtmsr r5 */
+        {adds,0x80850000u,neg,0x4e800020u}, /* owner-observing lwz */
+        {adds,0xe0a40000u,neg,0x4e800020u}, /* psq_l: program fault */
+        {adds,0x4800001du,neg,0x48000d54u,0x60000000u,0x60000000u,
+         0x60000000u,0x60000000u,0x7ca00124u,0x4e800020u}
+    };
+    const u32 fp_addresses[]={BASE+0x1200,BASE+0x1240,BASE+0x1260,BASE+0x1280,BASE+0x12a0};
+    const u32 fp_counts[]={5,4,4,4,10};
+    for(unsigned n=0;n<5;++n) {
+        PPCInst fp[10];
+        for(unsigned k=0;k<fp_counts[n];++k)fp[k]=ppc_decode(fp_words[n][k],fp_addresses[n]+k*4);
+        emit_function(out,fp,fp_counts[n],fp_addresses[n]);
+    }
+
+    /* Each width has a normal and arbitrary interior entry, with a pure
+     * prefix making bus-observation cycles distinguishable from entry time. */
+    const u32 mem2_words[]={0x88640000u,0xa0640000u,0x80640000u,0xc8640000u,
+                           0x98640000u,0xb0640000u,0x90640000u,0xd8640000u};
+    for(unsigned n=0;n<8;++n) {
+        const u32 pc=0x80004400u+n*0x20u;
+        PPCInst memory[3]={ppc_decode(0x38c60001u,pc),
+            ppc_decode(mem2_words[n],pc+4),ppc_decode(0x4e800020u,pc+8)};
+        emit_function(out,memory,3,pc);
+    }
+
+    /* Two separately emitted chunks. Their cross-page branch and return must
+     * retain the same architectural state when a host admits native chaining. */
+    PPCInst chain_a[2]={ppc_decode(0x38630001u,0x80005000u),
+        ppc_decode(0x48000ffcu,0x80005004u)};
+    PPCInst chain_b[2]={ppc_decode(0x38630001u,0x80006000u),
+        ppc_decode(0x4e800020u,0x80006004u)};
+    emit_function(out,chain_a,2,0x80005000u);
+    emit_function(out,chain_b,2,0x80006000u);
+
     FunctionList funcs = {0};
     if (!function_list_add(&funcs, BASE, BASE + (u32)count * 4u) ||
         !function_list_add(&funcs, BASE + 0x1000, BASE + 0x100C) ||
