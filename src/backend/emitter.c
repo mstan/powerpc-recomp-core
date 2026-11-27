@@ -505,7 +505,16 @@ static void emit_lwz_compare_beq_poll(FILE* out, const PPCInst* load,
     /* Aligned atomic load makes every guest lwz an actual host load even if a
      * device worker can change the polled word concurrently; it compiles to a
      * plain aligned load on x86 and avoids introducing a C data-race/hoist. */
+    fprintf(out, "#if defined(__GNUC__) || defined(__clang__)\n");
     fprintf(out, "                dr_poll_value = bswap32(__atomic_load_n((const u32*)dr_poll_ptr, __ATOMIC_RELAXED));\n");
+    /* MSVC guarantees atomic naturally aligned 32-bit volatile loads. Its
+     * volatile access also prevents loop-invariant load hoisting, without a
+     * read/modify/write intrinsic touching the guest's polled memory. */
+    fprintf(out, "#elif defined(_MSC_VER)\n");
+    fprintf(out, "                dr_poll_value = bswap32(*(const volatile u32*)dr_poll_ptr);\n");
+    fprintf(out, "#else\n");
+    fprintf(out, "                dr_poll_value = bswap32(atomic_load_explicit((const _Atomic(u32)*)dr_poll_ptr, memory_order_relaxed));\n");
+    fprintf(out, "#endif\n");
     fprintf(out, "                dr_cycles += %uu;\n", cycle_charge);
     fprintf(out, "                if (dr_poll_value != 0x%08Xu) break;\n", immediate);
     fprintf(out, "#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n");
@@ -800,6 +809,9 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "\n"
         "#include <string.h>\n"
         "#include <math.h>\n"
+        "#if !defined(__GNUC__) && !defined(__clang__) && !defined(_MSC_VER)\n"
+        "#include <stdatomic.h>\n"
+        "#endif\n"
         "#include \"cpu/cpu.h\"\n"
         "#ifndef DOLRECOMP_INLINE_FP\n"
         "#define DOLRECOMP_INLINE_FP 0\n"
