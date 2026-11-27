@@ -597,7 +597,9 @@ static void emit_direct_branch(FILE* out, const PPCInst* inst, bool local_target
         if (local_call) {
             fprintf(out, "            if (dr_ret_sp < DOLRECOMP_BL_SHADOW_DEPTH && dr_cycles < dr_deadline) {\n");
             fprintf(out, "                dr_ret_pc[dr_ret_sp] = %s;\n", emit_pc_literal(inst->address + 4));
+            fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
             fprintf(out, "                dr_ret_lbl[dr_ret_sp] = &&label_%08X;\n", inst->address + 4);
+            fprintf(out, "#endif\n");
             fprintf(out, "                dr_ret_sp++;\n");
             fprintf(out, "                goto label_%08X;\n", inst->branch_target);
             fprintf(out, "            }\n");
@@ -704,11 +706,15 @@ static void emit_dynamic_branch(FILE* out, const PPCInst* inst,
          * documented at the bl push site. */
         fprintf(out, "            if (dr_ret_sp > 0 && target == dr_ret_pc[dr_ret_sp - 1] &&\n");
         fprintf(out, "                dr_cycles < dr_deadline) {\n");
+        fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
         fprintf(out, "                void* dr_ret_target = dr_ret_lbl[--dr_ret_sp];\n");
+        fprintf(out, "#else\n                --dr_ret_sp;\n#endif\n");
         if (inst->lk) {
             fprintf(out, "                ctx->lr = %s;\n", emit_pc_literal(inst->address + 4));
         }
+        fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
         fprintf(out, "                goto *dr_ret_target;\n");
+        fprintf(out, "#else\n                goto dr_return_dispatch;\n#endif\n");
         fprintf(out, "            }\n");
     }
     if (inst->lk) {
@@ -781,6 +787,13 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
          * the round trip. Sized generously above realistic non-recursive IPL
          * call depth while staying tiny (<1KB) per chunk-function stack frame. */
         "#define DOLRECOMP_BL_SHADOW_DEPTH 32\n"
+        "#ifndef DOLRECOMP_LABEL_VALUES\n"
+        "#if defined(__GNUC__) || defined(__clang__)\n"
+        "#define DOLRECOMP_LABEL_VALUES 1\n"
+        "#else\n"
+        "#define DOLRECOMP_LABEL_VALUES 0\n"
+        "#endif\n"
+        "#endif\n"
         "#ifndef DOLRECOMP_FP_GUARD_SCOPE\n"
         "#define DOLRECOMP_FP_GUARD_SCOPE 0\n"
         "#endif\n"
@@ -3182,7 +3195,9 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
      * initializer -- they are only ever read at indices the matching push
      * already wrote in THIS SAME invocation. */
     if (has_shadow_calls) {
+        fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
         fprintf(out, "    void* dr_ret_lbl[DOLRECOMP_BL_SHADOW_DEPTH];\n");
+        fprintf(out, "#endif\n");
         fprintf(out, "    u32 dr_ret_pc[DOLRECOMP_BL_SHADOW_DEPTH];\n");
         fprintf(out, "    u32 dr_ret_sp = 0;\n");
     }
@@ -3291,6 +3306,18 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     /* Falling off the chunk's end is an exit like any other â€” spill the
      * cycles local (DR_RET()'s job everywhere else). */
     fprintf(out, "    DR_RET();\n");
+    if (has_shadow_calls) {
+        /* Standard C counterpart of the GNU label-value pop above. It uses
+         * the same authenticated return PC and stack/deadline admission,
+         * and reaches the same local label without another CPU dispatch. */
+        fprintf(out, "#if !DOLRECOMP_LABEL_VALUES\n");
+        fprintf(out, "dr_return_dispatch:\n");
+        fprintf(out, s_relocatable ? "    switch (dr_ret_pc[dr_ret_sp] - dr_bias) {\n"
+                                  : "    switch (dr_ret_pc[dr_ret_sp]) {\n");
+        for (i = 0; i < count; ++i)
+            fprintf(out, "    case 0x%08Xu: goto label_%08X;\n", insts[i].address, insts[i].address);
+        fprintf(out, "    default: ctx->pc = dr_ret_pc[dr_ret_sp]; DR_RET();\n    }\n#endif\n");
+    }
     fprintf(out, "}\n\n");
 
     free(is_leader);

@@ -229,6 +229,13 @@ target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
 
+# Exercise the standard-C shadow-return path even on GNU/Clang hosts.
+add_executable(test_c_execute_portable tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_include_directories(test_c_execute_portable PRIVATE ${DOLRECOMP_SRC})
+target_compile_definitions(test_c_execute_portable PRIVATE DOLRECOMP_LABEL_VALUES=0)
+target_link_libraries(test_c_execute_portable PRIVATE dr_cpu)
+add_test(NAME c_execute_portable COMMAND test_c_execute_portable)
+
 add_executable(test_native_function_emit tests/test_native_function_emit.c)
 target_link_libraries(test_native_function_emit PRIVATE dr_backend)
 set(DR_NATIVE_TEST_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/native_function_generated.c)
