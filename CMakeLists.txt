@@ -50,6 +50,25 @@ endif()
 
 set(DOLRECOMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+# Optional generated-to-generated chaining. This library contains no CPUState
+# layout or feature define; an unbound/off consumer retains normal dispatch.
+add_library(dr_native_chain STATIC src/cpu/native_chain.c)
+target_include_directories(dr_native_chain SYSTEM PUBLIC ${DOLRECOMP_SRC})
+
+# Preserve the host's CPUState header before providing the optional semantics.
+# Unknown compiler profiles keep the functioning out-of-line implementation.
+add_library(dr_fp_inline INTERFACE)
+target_include_directories(dr_fp_inline SYSTEM INTERFACE ${DOLRECOMP_SRC})
+if(MSVC)
+    target_compile_definitions(dr_fp_inline INTERFACE DOLRECOMP_INLINE_FP=1)
+    target_compile_options(dr_fp_inline INTERFACE /fp:strict)
+elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_definitions(dr_fp_inline INTERFACE DOLRECOMP_INLINE_FP=1)
+    target_compile_options(dr_fp_inline INTERFACE -ffp-contract=off)
+else()
+    target_compile_definitions(dr_fp_inline INTERFACE DOLRECOMP_INLINE_FP=0)
+endif()
+
 add_library(dr_cpu STATIC src/cpu/cpu.c)
 target_include_directories(dr_cpu PUBLIC ${DOLRECOMP_SRC})
 if(NOT WIN32)
@@ -210,6 +229,13 @@ target_include_directories(test_c_execute PRIVATE ${DOLRECOMP_SRC})
 target_link_libraries(test_c_execute PRIVATE dr_cpu)
 add_test(NAME c_execute COMMAND test_c_execute)
 
+# Exercise the standard-C shadow-return path even on GNU/Clang hosts.
+add_executable(test_c_execute_portable tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_include_directories(test_c_execute_portable PRIVATE ${DOLRECOMP_SRC})
+target_compile_definitions(test_c_execute_portable PRIVATE DOLRECOMP_LABEL_VALUES=0)
+target_link_libraries(test_c_execute_portable PRIVATE dr_cpu)
+add_test(NAME c_execute_portable COMMAND test_c_execute_portable)
+
 add_executable(test_native_function_emit tests/test_native_function_emit.c)
 target_link_libraries(test_native_function_emit PRIVATE dr_backend)
 set(DR_NATIVE_TEST_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/native_function_generated.c)
@@ -226,6 +252,62 @@ if(NOT WIN32)
     target_link_libraries(test_native_function_execute PRIVATE m)
 endif()
 add_test(NAME native_function_execute COMMAND test_native_function_execute)
+# Same generated instructions and expected architectural results, with the
+# optional FP guard scope and cycle-observation boundary both enabled.
+add_executable(test_c_execute_fp_scope tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_include_directories(test_c_execute_fp_scope PRIVATE ${DOLRECOMP_SRC})
+target_compile_definitions(test_c_execute_fp_scope PRIVATE DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_c_execute_fp_scope PRIVATE dr_cpu)
+add_test(NAME c_execute_fp_scope COMMAND test_c_execute_fp_scope)
+
+add_executable(test_c_execute_fp_inline tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_link_libraries(test_c_execute_fp_inline PRIVATE dr_cpu dr_fp_inline)
+target_compile_definitions(test_c_execute_fp_inline PRIVATE DOLRECOMP_OBSERVE_CYCLES=1 DOLRECOMP_FP_GUARD_SCOPE=1)
+add_test(NAME c_execute_fp_inline COMMAND test_c_execute_fp_inline)
+
+add_executable(test_native_chain tests/test_native_chain.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_native_chain PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_native_chain PRIVATE dr_cpu dr_native_chain)
+add_test(NAME native_chain_exact COMMAND test_native_chain)
+# An enabled emitter without an admitted host remains the existing native path.
+add_executable(test_c_execute_native_chain tests/test_c_execute.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_c_execute_native_chain PRIVATE DOLRECOMP_NATIVE_CHAIN=1 DOLRECOMP_FP_GUARD_SCOPE=1 DOLRECOMP_OBSERVE_CYCLES=1)
+target_link_libraries(test_c_execute_native_chain PRIVATE dr_cpu dr_native_chain dr_fp_inline)
+add_test(NAME c_execute_native_chain_unbound COMMAND test_c_execute_native_chain)
+
+add_executable(test_fp_inline tests/test_fp_inline.c)
+target_link_libraries(test_fp_inline PRIVATE dr_cpu dr_fp_inline)
+add_test(NAME fp_inline_exact COMMAND test_fp_inline)
+
+add_executable(test_fp_inline_fallback tests/test_fp_inline.c)
+target_compile_definitions(test_fp_inline_fallback PRIVATE DOLRECOMP_INLINE_FP=0)
+target_link_libraries(test_fp_inline_fallback PRIVATE dr_cpu)
+add_test(NAME fp_inline_fallback COMMAND test_fp_inline_fallback)
+
+foreach(_fp_test fpscr float_semantics)
+    add_executable(test_${_fp_test}_inline tests/test_${_fp_test}.c)
+    target_link_libraries(test_${_fp_test}_inline PRIVATE dr_cpu dr_fp_inline)
+    add_test(NAME ${_fp_test}_inline COMMAND test_${_fp_test}_inline)
+endforeach()
+
+# Both variants use the same emitted memory fixtures and cycle observation.
+foreach(_mem2_mode reference inline)
+  add_executable(test_c_execute_mem2_${_mem2_mode}
+    tests/test_mem2_inline.c ${DOLRECOMP_C_TEST_SOURCE})
+  target_include_directories(test_c_execute_mem2_${_mem2_mode} PRIVATE ${DOLRECOMP_SRC})
+  target_compile_definitions(test_c_execute_mem2_${_mem2_mode} PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
+  if(_mem2_mode STREQUAL "inline")
+    target_compile_definitions(test_c_execute_mem2_${_mem2_mode} PRIVATE DOLRECOMP_INLINE_MEM2=1)
+  endif()
+  target_link_libraries(test_c_execute_mem2_${_mem2_mode} PRIVATE dr_cpu)
+  add_test(NAME c_execute_mem2_${_mem2_mode} COMMAND test_c_execute_mem2_${_mem2_mode})
+endforeach()
+
+add_executable(test_cycle_observation tests/test_cycle_observation.c ${DOLRECOMP_C_TEST_SOURCE})
+target_compile_definitions(test_cycle_observation PRIVATE DOLRECOMP_OBSERVE_CYCLES=1)
+target_include_directories(test_cycle_observation PRIVATE ${DOLRECOMP_SRC})
+target_link_libraries(test_cycle_observation PRIVATE dr_cpu)
+add_test(NAME cycle_observation COMMAND test_cycle_observation)
 
 # Phase D2 (codegen speed campaign): real link+execute exactness proof for
 # the in-chunk bl/blr shadow-call-stack fast path (emitter.c's
@@ -262,6 +344,18 @@ add_test(NAME poll_loop_exactness
         -DHOST_GENERATOR=${CMAKE_GENERATOR}
         -DHOST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
         -DHOST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+        -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
+        -DHOST_BUILD_CONFIG=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake
+)
+add_test(NAME idle_skip_exactness
+    COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR_EXE=$<TARGET_FILE:test_poll_loop_gen>
+        -DOUTPUT_C=${CMAKE_CURRENT_BINARY_DIR}/idle_skip_check.c
+        -DHARNESS_SRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_poll_loop_harness.c
+        -DREPO_SRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+        -DENABLE_IDLE_SKIP=ON
+        -DHOST_GENERATOR=${CMAKE_GENERATOR}
         -DHOST_C_COMPILER=${CMAKE_C_COMPILER}
         -DHOST_BUILD_CONFIG=$<CONFIG>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/poll_loop_run.cmake

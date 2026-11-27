@@ -199,7 +199,7 @@ static void emit_xform_ea(FILE* out, u8 ra, u8 rb, bool update) {
  * today). */
 
 static void emit_load_fast(FILE* out, const PPCInst* inst, u32 width,
-                           bool sign_extend, bool update) {
+                           bool sign_extend, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_read32_fast"
                     : width == 16 ? "dolrecomp_mem_read16_fast"
                     : "dolrecomp_mem_read8_fast";
@@ -208,11 +208,11 @@ static void emit_load_fast(FILE* out, const PPCInst* inst, u32 width,
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
     if (sign_extend) {
-        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, fn, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -221,7 +221,7 @@ static void emit_load_fast(FILE* out, const PPCInst* inst, u32 width,
 }
 
 static void emit_loadx_fast(FILE* out, const PPCInst* inst, u32 width,
-                            bool sign_extend, bool update) {
+                            bool sign_extend, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_read32_fast"
                     : width == 16 ? "dolrecomp_mem_read16_fast"
                     : "dolrecomp_mem_read8_fast";
@@ -230,11 +230,11 @@ static void emit_loadx_fast(FILE* out, const PPCInst* inst, u32 width,
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
     if (sign_extend) {
-        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = (u32)(s32)(%s)%s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, width == 16 ? "s16" : "s8", fn, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s);\n",
-                inst->rD, fn, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->gpr[%u] = %s(ctx, dr_ram, ea, %s, dr_cycles + %uu);\n",
+                inst->rD, fn, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -242,7 +242,7 @@ static void emit_loadx_fast(FILE* out, const PPCInst* inst, u32 width,
     fprintf(out, "    }\n");
 }
 
-static void emit_store_fast(FILE* out, const PPCInst* inst, u32 width, bool update) {
+static void emit_store_fast(FILE* out, const PPCInst* inst, u32 width, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_write32_fast"
                     : width == 16 ? "dolrecomp_mem_write16_fast"
                     : "dolrecomp_mem_write8_fast";
@@ -251,15 +251,15 @@ static void emit_store_fast(FILE* out, const PPCInst* inst, u32 width, bool upda
     fprintf(out, "        u32 ea = ");
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
-    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s);\n",
-            fn, cast, inst->rS, emit_pc_literal(inst->address));
+    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s, dr_cycles + %uu);\n",
+            fn, cast, inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
     }
     fprintf(out, "    }\n");
 }
 
-static void emit_storex_fast(FILE* out, const PPCInst* inst, u32 width, bool update) {
+static void emit_storex_fast(FILE* out, const PPCInst* inst, u32 width, bool update, u32 cycle_prefix) {
     const char* fn = width == 32 ? "dolrecomp_mem_write32_fast"
                     : width == 16 ? "dolrecomp_mem_write16_fast"
                     : "dolrecomp_mem_write8_fast";
@@ -268,27 +268,27 @@ static void emit_storex_fast(FILE* out, const PPCInst* inst, u32 width, bool upd
     fprintf(out, "        u32 ea = ");
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
-    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s);\n",
-            fn, cast, inst->rS, emit_pc_literal(inst->address));
+    fprintf(out, "        %s(ctx, dr_ram, ea, (%s)ctx->gpr[%u], %s, dr_cycles + %uu);\n",
+            fn, cast, inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
     }
     fprintf(out, "    }\n");
 }
 
-static void emit_fload_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_fload_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s));\n",
-                emit_pc_literal(inst->address));
+        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                emit_pc_literal(inst->address), cycle_prefix);
         fprintf(out, "        ctx->fpr[%u] = value;\n", inst->rD);
         fprintf(out, "        ctx->ps1[%u] = value;\n", inst->rD);
     } else {
-        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s));\n",
-                inst->rD, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                inst->rD, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -296,19 +296,19 @@ static void emit_fload_fast(FILE* out, const PPCInst* inst, bool single, bool up
     fprintf(out, "    }\n");
 }
 
-static void emit_floadx_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_floadx_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s));\n",
-                emit_pc_literal(inst->address));
+        fprintf(out, "        f64 value = dolrecomp_f32_from_bits(dolrecomp_mem_read32_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                emit_pc_literal(inst->address), cycle_prefix);
         fprintf(out, "        ctx->fpr[%u] = value;\n", inst->rD);
         fprintf(out, "        ctx->ps1[%u] = value;\n", inst->rD);
     } else {
-        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s));\n",
-                inst->rD, emit_pc_literal(inst->address));
+        fprintf(out, "        ctx->fpr[%u] = dolrecomp_f64_from_bits(dolrecomp_mem_read64_fast(ctx, dr_ram, ea, %s, dr_cycles + %uu));\n",
+                inst->rD, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -316,17 +316,17 @@ static void emit_floadx_fast(FILE* out, const PPCInst* inst, bool single, bool u
     fprintf(out, "    }\n");
 }
 
-static void emit_fstore_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_fstore_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_dform_ea(out, inst->rA, inst->simm, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -334,17 +334,17 @@ static void emit_fstore_fast(FILE* out, const PPCInst* inst, bool single, bool u
     fprintf(out, "    }\n");
 }
 
-static void emit_fstorex_fast(FILE* out, const PPCInst* inst, bool single, bool update) {
+static void emit_fstorex_fast(FILE* out, const PPCInst* inst, bool single, bool update, u32 cycle_prefix) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 ea = ");
     emit_xform_ea(out, inst->rA, inst->rB, update);
     fprintf(out, ";\n");
     if (single) {
-        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write32_fast(ctx, dr_ram, ea, dolrecomp_f32_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     } else {
-        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s);\n",
-                inst->rS, emit_pc_literal(inst->address));
+        fprintf(out, "        dolrecomp_mem_write64_fast(ctx, dr_ram, ea, dolrecomp_f64_to_bits(ctx->fpr[%u]), %s, dr_cycles + %uu);\n",
+                inst->rS, emit_pc_literal(inst->address), cycle_prefix);
     }
     if (update) {
         fprintf(out, "        ctx->gpr[%u] = ea;\n", inst->rA);
@@ -438,7 +438,7 @@ static bool branch_target_is_local(u32 func_start, u32 func_end, u32 target) {
  * Recognize the common three-instruction hardware/firmware wait shape:
  *
  *   lwz     rD, disp(rA)
- *   cmplwi  crF, rD, imm
+ *   cmp[l]wi crF, rD, imm
  *   beq     crF, loop
  *
  * The ordinary emitter already keeps a taken backward conditional inside the
@@ -451,8 +451,13 @@ static bool branch_target_is_local(u32 func_start, u32 func_end, u32 target) {
  * involved -- and deliberately accepts only the simplest fully-auditable
  * shape.  The normal instruction bodies/labels remain emitted as the exact
  * fallback for uniform mode, non-RAM/unaligned addresses, and dispatch entry at
- * either of the two interior instructions. */
-static bool is_lwz_cmpli_beq_poll(const PPCInst* insts, u32 count, u32 i) {
+ * either of the two interior instructions. The idle-selected provider may
+ * remove repeated loads only after the machine admits this RAM range as
+ * unchanged until the armed deadline, with EE enabled. It still charges
+ * complete iterations and preserves the exact branch continuation/state.
+ * Signed compare lowering is selected with idle skipping; reference builds
+ * retain their original signed instruction bodies. */
+static bool is_lwz_compare_beq_poll(const PPCInst* insts, u32 count, u32 i) {
     if (i + 3u >= count)
         return false; /* needs a real fallthrough label after the branch */
 
@@ -461,7 +466,8 @@ static bool is_lwz_cmpli_beq_poll(const PPCInst* insts, u32 count, u32 i) {
     const PPCInst* branch = &insts[i + 2u];
 
     return load->op == PPC_OP_LWZ && !load->embedded_data &&
-           cmp->op == PPC_OP_CMPLI && !cmp->embedded_data && cmp->l == 0u &&
+           (cmp->op == PPC_OP_CMPLI || cmp->op == PPC_OP_CMPI) &&
+           !cmp->embedded_data && cmp->l == 0u &&
            cmp->rA == load->rD &&
            branch->op == PPC_OP_BC && !branch->embedded_data && !branch->lk &&
            branch->bo == 12u && branch->bi == (u8)(cmp->crfD * 4u + 2u) &&
@@ -472,13 +478,14 @@ static bool is_lwz_cmpli_beq_poll(const PPCInst* insts, u32 count, u32 i) {
            (load->rA == 0u || load->rD != load->rA);
 }
 
-static void emit_lwz_cmpli_beq_poll(FILE* out, const PPCInst* load,
+static void emit_lwz_compare_beq_poll(FILE* out, const PPCInst* load,
                                     const PPCInst* cmp, const PPCInst* branch,
                                     u32 cycle_charge, u32 fallthrough) {
     const u32 cr_shift = 28u - (u32)cmp->crfD * 4u;
     const u32 cr_mask = 0xFu << cr_shift;
+    const u32 immediate=cmp->op==PPC_OP_CMPI?(u32)(s32)cmp->simm:cmp->uimm;
 
-    fprintf(out, "    /* Exact lwz/cmplwi/beq poll fast path (class peephole). */\n");
+    fprintf(out, "    /* Exact lwz/compare/beq poll fast path (class peephole). */\n");
     fprintf(out, "    if (dr_cycles < dr_deadline) {\n");
     fprintf(out, "        u32 dr_poll_ea = ");
     emit_dform_ea(out, load->rA, load->simm, false);
@@ -498,9 +505,25 @@ static void emit_lwz_cmpli_beq_poll(FILE* out, const PPCInst* load,
     /* Aligned atomic load makes every guest lwz an actual host load even if a
      * device worker can change the polled word concurrently; it compiles to a
      * plain aligned load on x86 and avoids introducing a C data-race/hoist. */
+    fprintf(out, "#if defined(__GNUC__) || defined(__clang__)\n");
     fprintf(out, "                dr_poll_value = bswap32(__atomic_load_n((const u32*)dr_poll_ptr, __ATOMIC_RELAXED));\n");
+    /* MSVC guarantees atomic naturally aligned 32-bit volatile loads. Its
+     * volatile access also prevents loop-invariant load hoisting, without a
+     * read/modify/write intrinsic touching the guest's polled memory. */
+    fprintf(out, "#elif defined(_MSC_VER)\n");
+    fprintf(out, "                dr_poll_value = bswap32(*(const volatile u32*)dr_poll_ptr);\n");
+    fprintf(out, "#else\n");
+    fprintf(out, "                dr_poll_value = bswap32(atomic_load_explicit((const _Atomic(u32)*)dr_poll_ptr, memory_order_relaxed));\n");
+    fprintf(out, "#endif\n");
     fprintf(out, "                dr_cycles += %uu;\n", cycle_charge);
-    fprintf(out, "                if (dr_poll_value != 0x%04Xu) break;\n", cmp->uimm);
+    fprintf(out, "                if (dr_poll_value != 0x%08Xu) break;\n", immediate);
+    fprintf(out, "#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n");
+    fprintf(out, "                if (dr_cycles < dr_deadline && (ctx->msr & 0x8000u) && ppc_idle_can_skip(ctx,dr_poll_ea)) {\n");
+    fprintf(out, "                    const u64 dr_idle_steps=1u+(dr_deadline-dr_cycles-1u)/%uu;\n",cycle_charge);
+    fprintf(out, "                    if (dr_idle_steps <= (UINT64_MAX-dr_cycles)/%uu) {\n",cycle_charge);
+    fprintf(out, "                        const u64 dr_idle_cycles=dr_idle_steps*%uu;\n",cycle_charge);
+    fprintf(out, "                        dr_cycles+=dr_idle_cycles;ppc_idle_note_cycles(dr_idle_cycles);\n");
+    fprintf(out, "                    }\n                }\n#endif\n");
     fprintf(out, "                if (dr_cycles >= dr_deadline) {\n");
     fprintf(out, "                    ctx->gpr[%u] = dr_poll_value;\n", load->rD);
     fprintf(out, "                    ctx->cr = (ctx->cr & ~0x%08Xu) | ((0x2u | ((ctx->xer >> 31) & 1u)) << %uu);\n",
@@ -511,7 +534,10 @@ static void emit_lwz_cmpli_beq_poll(FILE* out, const PPCInst* load,
     fprintf(out, "            }\n");
     fprintf(out, "            ctx->gpr[%u] = dr_poll_value;\n", load->rD);
     fprintf(out, "            {\n");
-    fprintf(out, "                u32 dr_poll_cr = dr_poll_value < 0x%04Xu ? 0x8u : 0x4u;\n", cmp->uimm);
+    if(cmp->op==PPC_OP_CMPI)
+        fprintf(out,"                u32 dr_poll_cr = (dr_poll_value^0x80000000u) < (0x%08Xu^0x80000000u) ? 0x8u : 0x4u;\n",immediate);
+    else
+        fprintf(out,"                u32 dr_poll_cr = dr_poll_value < 0x%08Xu ? 0x8u : 0x4u;\n",immediate);
     fprintf(out, "                dr_poll_cr |= (ctx->xer >> 31) & 1u;\n");
     fprintf(out, "                ctx->cr = (ctx->cr & ~0x%08Xu) | (dr_poll_cr << %uu);\n",
             cr_mask, cr_shift);
@@ -580,7 +606,9 @@ static void emit_direct_branch(FILE* out, const PPCInst* inst, bool local_target
         if (local_call) {
             fprintf(out, "            if (dr_ret_sp < DOLRECOMP_BL_SHADOW_DEPTH && dr_cycles < dr_deadline) {\n");
             fprintf(out, "                dr_ret_pc[dr_ret_sp] = %s;\n", emit_pc_literal(inst->address + 4));
+            fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
             fprintf(out, "                dr_ret_lbl[dr_ret_sp] = &&label_%08X;\n", inst->address + 4);
+            fprintf(out, "#endif\n");
             fprintf(out, "                dr_ret_sp++;\n");
             fprintf(out, "                goto label_%08X;\n", inst->branch_target);
             fprintf(out, "            }\n");
@@ -652,7 +680,7 @@ static void emit_direct_branch(FILE* out, const PPCInst* inst, bool local_target
 
 static void emit_dynamic_branch(FILE* out, const PPCInst* inst,
                                 const char* target_expr, u32 cycle_charge,
-                                bool is_blr_class) {
+                                bool is_blr_class, bool has_shadow_calls) {
     fprintf(out, "    {\n");
     fprintf(out, "        u32 target = %s;\n", target_expr);
     emit_branch_condition(out, inst->bo, inst->bi);
@@ -665,7 +693,7 @@ static void emit_dynamic_branch(FILE* out, const PPCInst* inst,
      * fresh leader on the instruction that follows them, so that flush
      * fires exactly here). */
     fprintf(out, "            dr_cycles += %uu;\n", cycle_charge);
-    if (is_blr_class) {
+    if (is_blr_class && has_shadow_calls) {
         /* Shadow-stack pop: this fires only when a same-chunk bl already
          * pushed a matching entry (see emit_direct_branch's local_call
          * path) -- dr_ret_pc[dr_ret_sp-1] is architecturally exactly the
@@ -687,11 +715,15 @@ static void emit_dynamic_branch(FILE* out, const PPCInst* inst,
          * documented at the bl push site. */
         fprintf(out, "            if (dr_ret_sp > 0 && target == dr_ret_pc[dr_ret_sp - 1] &&\n");
         fprintf(out, "                dr_cycles < dr_deadline) {\n");
+        fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
         fprintf(out, "                void* dr_ret_target = dr_ret_lbl[--dr_ret_sp];\n");
+        fprintf(out, "#else\n                --dr_ret_sp;\n#endif\n");
         if (inst->lk) {
             fprintf(out, "                ctx->lr = %s;\n", emit_pc_literal(inst->address + 4));
         }
+        fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
         fprintf(out, "                goto *dr_ret_target;\n");
+        fprintf(out, "#else\n                goto dr_return_dispatch;\n#endif\n");
         fprintf(out, "            }\n");
     }
     if (inst->lk) {
@@ -764,10 +796,29 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
          * the round trip. Sized generously above realistic non-recursive IPL
          * call depth while staying tiny (<1KB) per chunk-function stack frame. */
         "#define DOLRECOMP_BL_SHADOW_DEPTH 32\n"
+        "#ifndef DOLRECOMP_LABEL_VALUES\n"
+        "#if defined(__GNUC__) || defined(__clang__)\n"
+        "#define DOLRECOMP_LABEL_VALUES 1\n"
+        "#else\n"
+        "#define DOLRECOMP_LABEL_VALUES 0\n"
+        "#endif\n"
+        "#endif\n"
+        "#ifndef DOLRECOMP_FP_GUARD_SCOPE\n"
+        "#define DOLRECOMP_FP_GUARD_SCOPE 0\n"
+        "#endif\n"
         "\n"
         "#include <string.h>\n"
         "#include <math.h>\n"
+        "#if !defined(__GNUC__) && !defined(__clang__) && !defined(_MSC_VER)\n"
+        "#include <stdatomic.h>\n"
+        "#endif\n"
         "#include \"cpu/cpu.h\"\n"
+        "#ifndef DOLRECOMP_INLINE_FP\n"
+        "#define DOLRECOMP_INLINE_FP 0\n"
+        "#endif\n"
+        "#if DOLRECOMP_INLINE_FP\n"
+        "#include \"cpu/fp_binary.h\"\n"
+        "#endif\n"
         /* The store fast paths below call gcn_ring_watch_check -- the always-on
          * write-watch ring. That instrument lives in the RUNTIME, but generated
          * code must also compile standalone: the recompiler's own codegen tests
@@ -789,20 +840,39 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "}\n"
         "#endif\n"
         "\n"
-        /* E1 (perf campaign 2): every emit_function body keeps ctx->cycles in
-         * a local (dr_cycles) for the whole invocation -- ctx->cycles is
-         * observed by nothing reachable from inside a chunk (verified:
-         * dispatch.c reads it only after the call returns; no MMIO handler or
-         * ppc_* helper touches it), so the ONLY places the memory field must
-         * be coherent are the function's exits. DR_RET() is that spill+return;
-         * every `return` emitted inside a chunk body goes through it. */
+        /* Exits publish accumulated cycles unconditionally. Deadline-driven
+         * hosts opt into observation at bus/helper calls; reference builds
+         * preserve the original exit-only contract. */
+        "#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n"
+        "extern bool ppc_idle_can_skip(CPUState*,u32);\n"
+        "extern void ppc_idle_note_cycles(u64);\n"
+        "#endif\n"
+        "#ifndef DOLRECOMP_NATIVE_CHAIN\n"
+        "#define DOLRECOMP_NATIVE_CHAIN 0\n"
+        "#endif\n"
+        "#if DOLRECOMP_NATIVE_CHAIN\n"
+        "#include \"cpu/native_chain_inline.h\"\n"
+        "#define DR_RET() do { ctx->cycles = dr_cycles; if (dr_cycles > dr_chain_entry_cycles) (void)dr_native_chain_next(ctx); return; } while (0)\n"
+        "#else\n"
         "#define DR_RET() do { ctx->cycles = dr_cycles; return; } while (0)\n"
+        "#endif\n"
+        "#if defined(DOLRECOMP_OBSERVE_CYCLES) && DOLRECOMP_OBSERVE_CYCLES\n"
+        "#define DR_PUBLISH_CYCLES(value) (ctx->cycles = (value))\n"
+        "#else\n"
+        "#define DR_PUBLISH_CYCLES(value) ((void)0)\n"
+        "#endif\n"
         "\n"
         /* always_inline: Phase D2's --param budgets still left 391/1206 fast-
          * path call sites uninlined (gcc cold-call heuristics, documented in
          * runtime/CMakeLists.txt); forcing the issue is exact -- these
          * helpers are the hot path by construction. */
+        "#if defined(__GNUC__) || defined(__clang__)\n"
         "#define DR_MEM_INLINE static inline __attribute__((always_inline))\n"
+        "#elif defined(_MSC_VER)\n"
+        "#define DR_MEM_INLINE static __forceinline\n"
+        "#else\n"
+        "#define DR_MEM_INLINE static inline\n"
+        "#endif\n"
         "\n"
         "static inline u32 dolrecomp_rotl32(u32 value, u32 sh) {\n"
         "    sh &= 31u;\n"
@@ -889,6 +959,35 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "    return dolrecomp_f32_to_bits(value);\n"
         "}\n"
         "\n"
+        "/* Optional ordinary MEM2 hits retain the bus fallback for absent, short,\n"
+        " * unmapped or device ranges. Size is a live binding, not a Wii constant. */\n"
+        "#ifndef DOLRECOMP_INLINE_MEM2\n"
+        "#define DOLRECOMP_INLINE_MEM2 0\n"
+        "#endif\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "#if defined(__has_include)\n"
+        "#if __has_include(\"cpu/native_code.h\")\n"
+        "#include \"cpu/native_code.h\"\n"
+        "#define DR_MEM2_NOTE_STORE(ea, size) gcn_native_code_note_store(ea, size)\n"
+        "#endif\n"
+        "#endif\n"
+        "#ifndef DR_MEM2_NOTE_STORE\n"
+        "#define DR_MEM2_NOTE_STORE(ea, size) ((void)0)\n"
+        "#endif\n"
+        "DR_MEM_INLINE u8* dolrecomp_mem2_hit(CPUState* ctx, u32 ea, u32 width) {\n"
+        "    if (!ctx->mem2 || ctx->mem2_size < width) return NULL;\n"
+        "    u32 offset;\n"
+        "    if (ea >= 0x10000000u && ea - 0x10000000u < ctx->mem2_size)\n"
+        "        offset = ea - 0x10000000u;\n"
+        "    else if (ea >= WII_MEM2_BASE && ea < WII_MEM2_BASE + ctx->mem2_size)\n"
+        "        offset = ea - WII_MEM2_BASE;\n"
+        "    else if (ea >= WII_MEM2_UNCACHED && ea < WII_MEM2_UNCACHED + ctx->mem2_size)\n"
+        "        offset = ea - WII_MEM2_UNCACHED;\n"
+        "    else return NULL;\n"
+        "    return offset <= ctx->mem2_size - width ? ctx->mem2 + offset : NULL;\n"
+        "}\n"
+        "#endif\n"
+        "\n"
         "/* Phase C (codegen speed campaign): inline replica of memory.c's\n"
         " * mem_read / mem_write RAM-hit fast path -- the three non-\n"
         " * overlapping RAM windows (cached 0x80000000, uncached 0xC0000000,\n"
@@ -905,43 +1004,63 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         " * reservation-clear (lwarx/stwcx) on every RAM hit, not just the\n"
         " * slow path -- a plain store to a reserved line must still\n"
         " * invalidate the reservation. */\n"
-        "DR_MEM_INLINE u8 dolrecomp_mem_read8_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u8 dolrecomp_mem_read8_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea < GC_RAM_BASE + GC_MAIN_RAM_SIZE)\n"
         "        return ram[ea - GC_RAM_BASE];\n"
         "    if (ea >= GC_RAM_UNCACHED && ea < GC_RAM_UNCACHED + GC_MAIN_RAM_SIZE)\n"
         "        return ram[ea - GC_RAM_UNCACHED];\n"
         "    if (ea < GC_MAIN_RAM_SIZE)\n"
         "        return ram[ea];\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 1u);\n"
+        "    if (dr_mem2) return *dr_mem2;\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read8(ctx, ea, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE u16 dolrecomp_mem_read16_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u16 dolrecomp_mem_read16_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 2u))\n"
         "        return read_be16(ram + (ea - GC_RAM_BASE));\n"
         "    if (ea >= GC_RAM_UNCACHED && ea <= GC_RAM_UNCACHED + (GC_MAIN_RAM_SIZE - 2u))\n"
         "        return read_be16(ram + (ea - GC_RAM_UNCACHED));\n"
         "    if (ea <= GC_MAIN_RAM_SIZE - 2u)\n"
         "        return read_be16(ram + ea);\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 2u);\n"
+        "    if (dr_mem2) return read_be16(dr_mem2);\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read16(ctx, ea, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE u32 dolrecomp_mem_read32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u32 dolrecomp_mem_read32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 4u))\n"
         "        return read_be32(ram + (ea - GC_RAM_BASE));\n"
         "    if (ea >= GC_RAM_UNCACHED && ea <= GC_RAM_UNCACHED + (GC_MAIN_RAM_SIZE - 4u))\n"
         "        return read_be32(ram + (ea - GC_RAM_UNCACHED));\n"
         "    if (ea <= GC_MAIN_RAM_SIZE - 4u)\n"
         "        return read_be32(ram + ea);\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 4u);\n"
+        "    if (dr_mem2) return read_be32(dr_mem2);\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read32(ctx, ea, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE u64 dolrecomp_mem_read64_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia) {\n"
+        "DR_MEM_INLINE u64 dolrecomp_mem_read64_fast(CPUState* ctx, u8* const ram, u32 ea, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 8u))\n"
         "        return read_be64(ram + (ea - GC_RAM_BASE));\n"
         "    if (ea >= GC_RAM_UNCACHED && ea <= GC_RAM_UNCACHED + (GC_MAIN_RAM_SIZE - 8u))\n"
         "        return read_be64(ram + (ea - GC_RAM_UNCACHED));\n"
         "    if (ea <= GC_MAIN_RAM_SIZE - 8u)\n"
         "        return read_be64(ram + ea);\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 8u);\n"
+        "    if (dr_mem2) return read_be64(dr_mem2);\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    return mem_read64(ctx, ea, cia);\n"
         "}\n"
         "\n"
@@ -979,7 +1098,7 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        ctx->reserve_valid = false;\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write8_fast(CPUState* ctx, u8* const ram, u32 ea, u8 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write8_fast(CPUState* ctx, u8* const ram, u32 ea, u8 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea < GC_RAM_BASE + GC_MAIN_RAM_SIZE) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 1u, cia);\n"
@@ -998,10 +1117,22 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        ram[ea] = value;\n"
         "        return;\n"
         "    }\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 1u);\n"
+        "    if (dr_mem2) {\n"
+        "        DR_PUBLISH_CYCLES(cycles);\n"
+        "        gcn_ring_watch_check(ea, value, 1u, cia);\n"
+        "        dolrecomp_clear_reservation(ctx, ea);\n"
+        "        DR_MEM2_NOTE_STORE(ea, 1u);\n"
+        "        *dr_mem2 = value;\n"
+        "        return;\n"
+        "    }\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write8(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write16_fast(CPUState* ctx, u8* const ram, u32 ea, u16 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write16_fast(CPUState* ctx, u8* const ram, u32 ea, u16 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 2u)) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 2u, cia);\n"
@@ -1020,10 +1151,22 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        write_be16(ram + ea, value);\n"
         "        return;\n"
         "    }\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 2u);\n"
+        "    if (dr_mem2) {\n"
+        "        DR_PUBLISH_CYCLES(cycles);\n"
+        "        gcn_ring_watch_check(ea, value, 2u, cia);\n"
+        "        dolrecomp_clear_reservation(ctx, ea);\n"
+        "        DR_MEM2_NOTE_STORE(ea, 2u);\n"
+        "        write_be16(dr_mem2, value);\n"
+        "        return;\n"
+        "    }\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write16(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write32_fast(CPUState* ctx, u8* const ram, u32 ea, u32 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 4u)) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 4u, cia);\n"
@@ -1042,10 +1185,22 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        write_be32(ram + ea, value);\n"
         "        return;\n"
         "    }\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 4u);\n"
+        "    if (dr_mem2) {\n"
+        "        DR_PUBLISH_CYCLES(cycles);\n"
+        "        gcn_ring_watch_check(ea, value, 4u, cia);\n"
+        "        dolrecomp_clear_reservation(ctx, ea);\n"
+        "        DR_MEM2_NOTE_STORE(ea, 4u);\n"
+        "        write_be32(dr_mem2, value);\n"
+        "        return;\n"
+        "    }\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write32(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
-        "DR_MEM_INLINE void dolrecomp_mem_write64_fast(CPUState* ctx, u8* const ram, u32 ea, u64 value, u32 cia) {\n"
+        "DR_MEM_INLINE void dolrecomp_mem_write64_fast(CPUState* ctx, u8* const ram, u32 ea, u64 value, u32 cia, u64 cycles) {\n"
         "    if (ea >= GC_RAM_BASE && ea <= GC_RAM_BASE + (GC_MAIN_RAM_SIZE - 8u)) {\n"
         "        dolrecomp_clear_reservation(ctx, ea);\n"
         "        gcn_ring_watch_check(ea, value, 8u, cia);\n"
@@ -1064,6 +1219,18 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu) {
         "        write_be64(ram + ea, value);\n"
         "        return;\n"
         "    }\n"
+        "#if DOLRECOMP_INLINE_MEM2\n"
+        "    u8* dr_mem2 = dolrecomp_mem2_hit(ctx, ea, 8u);\n"
+        "    if (dr_mem2) {\n"
+        "        DR_PUBLISH_CYCLES(cycles);\n"
+        "        gcn_ring_watch_check(ea, value, 8u, cia);\n"
+        "        dolrecomp_clear_reservation(ctx, ea);\n"
+        "        DR_MEM2_NOTE_STORE(ea, 8u);\n"
+        "        write_be64(dr_mem2, value);\n"
+        "        return;\n"
+        "    }\n"
+        "#endif\n"
+        "    DR_PUBLISH_CYCLES(cycles);\n"
         "    mem_write64(ctx, ea, value, cia);\n"
         "}\n"
         "\n"
@@ -1082,11 +1249,11 @@ void emit_footer(FILE* out) {
 }
 
 /* FP-class instructions: everything that hardware refuses with the FP-
- * unavailable exception (vector 0x800) when MSR[FP]=0 — float loads/stores,
+ * unavailable exception (vector 0x800) when MSR[FP]=0 â€” float loads/stores,
  * FP arithmetic/moves/compares, FPSCR ops, every paired-single op, and the
  * quantized psq family. Gekko User's Manual 2.1.1/6.4.6.4: paired-single
  * and quantized ops are FP-class and take 0x800 before any HID2 program
- * check. The OS relies on this trap for lazy FPU context switching — an
+ * check. The OS relies on this trap for lazy FPU context switching â€” an
  * interrupt handler's first FP instruction must fault so the OS can save
  * the interrupted thread's FPU state. Without the gate, handler FP work
  * executes on the interrupted code's live registers (this exact bug drew
@@ -1129,12 +1296,89 @@ static bool ppc_op_is_fp(PPCOpcode op) {
     }
 }
 
+/* Closed proof set: these helpers/inline operations touch only FP/FPSCR/CR
+ * state, never MSR or a bus/host callback. Memory, MSR writes, branches and
+ * unknown operations end the span. New opcodes require an explicit audit. */
+static bool fp_scope_preserved(PPCOpcode op) {
+    switch(op) {
+    case PPC_OP_FADDS: case PPC_OP_FSUBS: case PPC_OP_FMULS: case PPC_OP_FDIVS:
+    case PPC_OP_FRES: case PPC_OP_FMADDS: case PPC_OP_FMSUBS:
+    case PPC_OP_FNMADDS: case PPC_OP_FNMSUBS:
+    case PPC_OP_FADD: case PPC_OP_FSUB: case PPC_OP_FMUL: case PPC_OP_FDIV:
+    case PPC_OP_FRSQRTE: case PPC_OP_FMADD: case PPC_OP_FMSUB:
+    case PPC_OP_FNMADD: case PPC_OP_FNMSUB:
+    case PPC_OP_FCTIW: case PPC_OP_FCTIWZ: case PPC_OP_FRSP: case PPC_OP_FSEL:
+    case PPC_OP_FMR: case PPC_OP_FNEG: case PPC_OP_FABS: case PPC_OP_FNABS:
+    case PPC_OP_FCMPU: case PPC_OP_FCMPO:
+    case PPC_OP_MTFSB0: case PPC_OP_MTFSB1: case PPC_OP_MCRFS:
+    case PPC_OP_MFFS: case PPC_OP_MTFSF: case PPC_OP_MTFSFI:
+    case PPC_OP_PS_ADD: case PPC_OP_PS_SUB: case PPC_OP_PS_MUL:
+    case PPC_OP_PS_DIV: case PPC_OP_PS_RES: case PPC_OP_PS_RSQRTE:
+    case PPC_OP_PS_MADD: case PPC_OP_PS_MSUB: case PPC_OP_PS_NMADD:
+    case PPC_OP_PS_NMSUB: case PPC_OP_PS_NEG: case PPC_OP_PS_ABS:
+    case PPC_OP_PS_NABS: case PPC_OP_PS_MR:
+    case PPC_OP_PS_SUM0: case PPC_OP_PS_SUM1:
+    case PPC_OP_PS_MULS0: case PPC_OP_PS_MULS1:
+    case PPC_OP_PS_MADDS0: case PPC_OP_PS_MADDS1:
+    case PPC_OP_PS_MERGE00: case PPC_OP_PS_MERGE01:
+    case PPC_OP_PS_MERGE10: case PPC_OP_PS_MERGE11:
+    case PPC_OP_PS_CMPU0: case PPC_OP_PS_CMPO0:
+    case PPC_OP_PS_CMPU1: case PPC_OP_PS_CMPO1: case PPC_OP_PS_SEL:
+        return true;
+    default:return false;
+    }
+}
+static void emit_fp_guard(FILE* out,u32 address,u32 charge) {
+    fprintf(out,"    if (!(ctx->msr & 0x2000u)) {\n");
+    fprintf(out,"        ppc_fp_unavailable(ctx, %s);\n",emit_pc_literal(address));
+    fprintf(out,"        dr_cycles += %uu; DR_RET();\n",charge);
+    fprintf(out,"    }\n");
+}
+
 static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
                                         u32 func_start, u32 func_end,
-                                        u32 cycle_charge) {
+                                        u32 cycle_charge,bool fp_proven,
+                                        bool has_shadow_calls) {
     char disasm[64];
     ppc_disasm(disasm, sizeof(disasm), inst);
     fprintf(out, "    // %08X: %s\n", inst->address, disasm);
+
+    /* Device helpers observe the pre-instruction cycle. Plain MEM1 hits
+     * keep it local; their inline helpers publish only on a bus miss. */
+    switch(inst->op) {
+    case PPC_OP_MFTB:
+    case PPC_OP_MFSPR:
+    case PPC_OP_MTSPR:
+    case PPC_OP_LWBRX:
+    case PPC_OP_LHBRX:
+    case PPC_OP_STWBRX:
+    case PPC_OP_STHBRX:
+    case PPC_OP_LSWI:
+    case PPC_OP_LSWX:
+    case PPC_OP_STSWI:
+    case PPC_OP_STSWX:
+    case PPC_OP_LWARX:
+    case PPC_OP_STWCX:
+    case PPC_OP_STFIWX:
+    case PPC_OP_DCBZ:
+    case PPC_OP_DCBZ_L:
+    case PPC_OP_LMW:
+    case PPC_OP_STMW:
+    case PPC_OP_ECIWX:
+    case PPC_OP_ECOWX:
+    case PPC_OP_PSQ_L:
+    case PPC_OP_PSQ_LU:
+    case PPC_OP_PSQ_LX:
+    case PPC_OP_PSQ_LUX:
+    case PPC_OP_PSQ_ST:
+    case PPC_OP_PSQ_STU:
+    case PPC_OP_PSQ_STX:
+    case PPC_OP_PSQ_STUX:
+        fprintf(out,"    DR_PUBLISH_CYCLES(dr_cycles + %uu);\n",
+                cycle_charge-dr_ppc_num_cycles(inst->op));
+        break;
+    default:break;
+    }
 
     unsigned reloc = s_relocatable ? relocation_kind(inst->address) : 0;
     s_live_immediate = reloc == 4 || reloc == 6;
@@ -1171,16 +1415,15 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
     }
 
     /* Lazy-FPU trap (see ppc_op_is_fp above). SRR0 = this instruction so it
-     * re-executes after the OS handler enables FP and rfi's — the exact
+     * re-executes after the OS handler enables FP and rfi's â€” the exact
      * hardware restart semantic the lazy context switch depends on. The
      * helper takes cia explicitly and the dispatcher resumes at the vector,
      * so no ctx->pc pre-stamp is needed (same reasoning as the Phase B/C
      * pc-pure whitelist). */
     if (ppc_op_is_fp(inst->op)) {
-        fprintf(out, "    if (!(ctx->msr & 0x2000u)) {\n");
-        fprintf(out, "        ppc_fp_unavailable(ctx, %s);\n", emit_pc_literal(inst->address));
-        fprintf(out, "        dr_cycles += %uu; DR_RET();\n", cycle_charge);
-        fprintf(out, "    }\n");
+        if(fp_proven)fprintf(out,"#if !DOLRECOMP_FP_GUARD_SCOPE\n");
+        emit_fp_guard(out,inst->address,cycle_charge);
+        if(fp_proven)fprintf(out,"#endif\n");
     }
 
     switch (inst->op) {
@@ -2056,23 +2299,23 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
         emit_fcompare(out, inst);
         break;
 
-    case PPC_OP_LWZ:  emit_load_fast(out, inst, 32, false, false); break;
-    case PPC_OP_LWZU: emit_load_fast(out, inst, 32, false, true); break;
-    case PPC_OP_LBZ:  emit_load_fast(out, inst, 8,  false, false); break;
-    case PPC_OP_LBZU: emit_load_fast(out, inst, 8,  false, true); break;
-    case PPC_OP_LHZ:  emit_load_fast(out, inst, 16, false, false); break;
-    case PPC_OP_LHZU: emit_load_fast(out, inst, 16, false, true); break;
-    case PPC_OP_LHA:  emit_load_fast(out, inst, 16, true,  false); break;
-    case PPC_OP_LHAU: emit_load_fast(out, inst, 16, true,  true); break;
+    case PPC_OP_LWZ:  emit_load_fast(out, inst, 32, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LWZU: emit_load_fast(out, inst, 32, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZ:  emit_load_fast(out, inst, 8,  false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZU: emit_load_fast(out, inst, 8,  false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZ:  emit_load_fast(out, inst, 16, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZU: emit_load_fast(out, inst, 16, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHA:  emit_load_fast(out, inst, 16, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHAU: emit_load_fast(out, inst, 16, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_LWZX:  emit_loadx_fast(out, inst, 32, false, false); break;
-    case PPC_OP_LWZUX: emit_loadx_fast(out, inst, 32, false, true); break;
-    case PPC_OP_LBZX:  emit_loadx_fast(out, inst, 8,  false, false); break;
-    case PPC_OP_LBZUX: emit_loadx_fast(out, inst, 8,  false, true); break;
-    case PPC_OP_LHZX:  emit_loadx_fast(out, inst, 16, false, false); break;
-    case PPC_OP_LHZUX: emit_loadx_fast(out, inst, 16, false, true); break;
-    case PPC_OP_LHAX:  emit_loadx_fast(out, inst, 16, true,  false); break;
-    case PPC_OP_LHAUX: emit_loadx_fast(out, inst, 16, true,  true); break;
+    case PPC_OP_LWZX:  emit_loadx_fast(out, inst, 32, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LWZUX: emit_loadx_fast(out, inst, 32, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZX:  emit_loadx_fast(out, inst, 8,  false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LBZUX: emit_loadx_fast(out, inst, 8,  false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZX:  emit_loadx_fast(out, inst, 16, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHZUX: emit_loadx_fast(out, inst, 16, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHAX:  emit_loadx_fast(out, inst, 16, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LHAUX: emit_loadx_fast(out, inst, 16, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
     /* Phase C: byte-reversed loads stay an unconditional slow call (not part
      * of the "plain" inlined class) but still gain cia; their mem_read* call
@@ -2097,44 +2340,44 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
         fprintf(out, "    }\n");
         break;
 
-    case PPC_OP_LFS:   emit_fload_fast(out, inst, true,  false); break;
-    case PPC_OP_LFSU:  emit_fload_fast(out, inst, true,  true); break;
-    case PPC_OP_LFD:   emit_fload_fast(out, inst, false, false); break;
-    case PPC_OP_LFDU:  emit_fload_fast(out, inst, false, true); break;
+    case PPC_OP_LFS:   emit_fload_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFSU:  emit_fload_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFD:   emit_fload_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFDU:  emit_fload_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_LFSX:  emit_floadx_fast(out, inst, true,  false); break;
-    case PPC_OP_LFSUX: emit_floadx_fast(out, inst, true,  true); break;
-    case PPC_OP_LFDX:  emit_floadx_fast(out, inst, false, false); break;
-    case PPC_OP_LFDUX: emit_floadx_fast(out, inst, false, true); break;
+    case PPC_OP_LFSX:  emit_floadx_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFSUX: emit_floadx_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFDX:  emit_floadx_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_LFDUX: emit_floadx_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
     case PPC_OP_PSQ_L:   emit_psq_load(out, inst, false, false, cycle_charge); break;
     case PPC_OP_PSQ_LU:  emit_psq_load(out, inst, false, true, cycle_charge); break;
     case PPC_OP_PSQ_LX:  emit_psq_load(out, inst, true,  false, cycle_charge); break;
     case PPC_OP_PSQ_LUX: emit_psq_load(out, inst, true,  true, cycle_charge); break;
 
-    case PPC_OP_STW:  emit_store_fast(out, inst, 32, false); break;
-    case PPC_OP_STWU: emit_store_fast(out, inst, 32, true); break;
-    case PPC_OP_STB:  emit_store_fast(out, inst, 8,  false); break;
-    case PPC_OP_STBU: emit_store_fast(out, inst, 8,  true); break;
-    case PPC_OP_STH:  emit_store_fast(out, inst, 16, false); break;
-    case PPC_OP_STHU: emit_store_fast(out, inst, 16, true); break;
+    case PPC_OP_STW:  emit_store_fast(out, inst, 32, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STWU: emit_store_fast(out, inst, 32, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STB:  emit_store_fast(out, inst, 8,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STBU: emit_store_fast(out, inst, 8,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STH:  emit_store_fast(out, inst, 16, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STHU: emit_store_fast(out, inst, 16, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_STWX:  emit_storex_fast(out, inst, 32, false); break;
-    case PPC_OP_STWUX: emit_storex_fast(out, inst, 32, true); break;
-    case PPC_OP_STBX:  emit_storex_fast(out, inst, 8,  false); break;
-    case PPC_OP_STBUX: emit_storex_fast(out, inst, 8,  true); break;
-    case PPC_OP_STHX:  emit_storex_fast(out, inst, 16, false); break;
-    case PPC_OP_STHUX: emit_storex_fast(out, inst, 16, true); break;
+    case PPC_OP_STWX:  emit_storex_fast(out, inst, 32, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STWUX: emit_storex_fast(out, inst, 32, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STBX:  emit_storex_fast(out, inst, 8,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STBUX: emit_storex_fast(out, inst, 8,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STHX:  emit_storex_fast(out, inst, 16, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STHUX: emit_storex_fast(out, inst, 16, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_STFS:   emit_fstore_fast(out, inst, true,  false); break;
-    case PPC_OP_STFSU:  emit_fstore_fast(out, inst, true,  true); break;
-    case PPC_OP_STFD:   emit_fstore_fast(out, inst, false, false); break;
-    case PPC_OP_STFDU:  emit_fstore_fast(out, inst, false, true); break;
+    case PPC_OP_STFS:   emit_fstore_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFSU:  emit_fstore_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFD:   emit_fstore_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFDU:  emit_fstore_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
-    case PPC_OP_STFSX:  emit_fstorex_fast(out, inst, true,  false); break;
-    case PPC_OP_STFSUX: emit_fstorex_fast(out, inst, true,  true); break;
-    case PPC_OP_STFDX:  emit_fstorex_fast(out, inst, false, false); break;
-    case PPC_OP_STFDUX: emit_fstorex_fast(out, inst, false, true); break;
+    case PPC_OP_STFSX:  emit_fstorex_fast(out, inst, true,  false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFSUX: emit_fstorex_fast(out, inst, true,  true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFDX:  emit_fstorex_fast(out, inst, false, false, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
+    case PPC_OP_STFDUX: emit_fstorex_fast(out, inst, false, true, cycle_charge - dr_ppc_num_cycles(inst->op)); break;
 
     case PPC_OP_PSQ_ST:   emit_psq_store(out, inst, false, false, cycle_charge); break;
     case PPC_OP_PSQ_STU:  emit_psq_store(out, inst, false, true, cycle_charge); break;
@@ -2315,7 +2558,7 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
     case PPC_OP_BCLR:
         /* is_blr_class=true: the canonical return instruction. Eligible for
          * the shadow-stack pop fast path -- see emit_dynamic_branch. */
-        emit_dynamic_branch(out, inst, "ctx->lr & ~3u", cycle_charge, true);
+        emit_dynamic_branch(out, inst, "ctx->lr & ~3u", cycle_charge, true,has_shadow_calls);
         break;
 
     case PPC_OP_BCCTR:
@@ -2324,7 +2567,7 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
          * stack: matching by coincidental ctx->ctr == some pushed return PC
          * would be semantically bogus (bcctr never pops a call frame on real
          * hardware), so it keeps the original always-return codegen. */
-        emit_dynamic_branch(out, inst, "ctx->ctr & ~3u", cycle_charge, false);
+        emit_dynamic_branch(out, inst, "ctx->ctr & ~3u", cycle_charge, false,has_shadow_calls);
         break;
 
     case PPC_OP_TWI:
@@ -2502,7 +2745,7 @@ void emit_instruction(FILE* out, const PPCInst* inst) {
      * context (no switch-dispatch entry compensation, no block-exit flush --
      * see emit_function for that machinery), so this instruction is its own
      * one-instruction "block": charge exactly its own cost at any exit. */
-    emit_instruction_with_range(out, inst, 0, (u32)-1, dr_ppc_num_cycles(inst->op));
+    emit_instruction_with_range(out, inst, 0, (u32)-1, dr_ppc_num_cycles(inst->op),false,true);
 }
 
 /* A "branch" for basic-block boundary purposes: any instruction that can
@@ -2905,18 +3148,45 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     u32 i;
     u32 func_end = func_addr + count * 4u;
     bool* is_leader = NULL;
+    bool* fp_proven = NULL;
     u32* cum = NULL;
+    bool has_shadow_calls = false;
+
+    /* Match emit_direct_branch's local-call eligibility. A return-only chunk
+     * has no shadow to pop and no address-of-label expression; Clang rejects
+     * an indirect goto in such a function even when its depth is always zero.
+     * Linked REL24 branches leave through their runtime relocation route. */
+    for (i = 0; i < count; ++i) {
+        if (!insts[i].embedded_data && insts[i].lk &&
+            (insts[i].op == PPC_OP_B || insts[i].op == PPC_OP_BC) &&
+            branch_target_is_local(func_addr,func_end,insts[i].branch_target) &&
+            branch_target_is_local(func_addr,func_end,insts[i].address+4u) &&
+            (!s_relocatable || relocation_kind(insts[i].address) != 10)) {
+            has_shadow_calls = true;
+            break;
+        }
+    }
 
     if (count > 0) {
         is_leader = (bool*)malloc(count * sizeof(bool));
+        fp_proven = (bool*)malloc(count * sizeof(bool));
         cum = (u32*)malloc(count * sizeof(u32));
-        if (!is_leader || !cum) {
+        if (!is_leader || !cum || !fp_proven) {
             fprintf(stderr, "error: out of memory computing block cycle costs\n");
             free(is_leader);
             free(cum);
+            free(fp_proven);
             exit(1);
         }
         compute_block_costs(insts, count, func_addr, func_end, is_leader, cum);
+        bool proof=false;
+        for(i=0;i<count;++i) {
+            if(is_leader[i])proof=false;
+            /* Relocated operands call back into the owner before the original
+             * gate. Keep that path unchanged rather than assume its purity. */
+            fp_proven[i]=!s_relocatable && proof && !insts[i].embedded_data && ppc_op_is_fp(insts[i].op);
+            proof=!s_relocatable && !insts[i].embedded_data && fp_scope_preserved(insts[i].op);
+        }
     }
 
     fprintf(out, "void func_%08X%s(CPUState* ctx) {\n", func_addr,
@@ -2925,7 +3195,7 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
         fprintf(out, "    const u32 dr_bias = ctx->native_pc_bias;\n");
     /* In-chunk bl/blr fast-path shadow call stack (see emit_direct_branch's
      * lk-branch handling and emit_dynamic_branch's is_blr_class handling).
-     * Declared UNCONDITIONALLY, before the switch, so `dr_ret_sp = 0` runs on
+     * When needed, declared before the switch, so `dr_ret_sp = 0` runs on
      * EVERY entry into this function regardless of which case the switch
      * lands on -- including a mid-function dispatch-loop re-entry landing
      * past this declaration, which in C never re-runs a skipped initializer.
@@ -2936,9 +3206,13 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
      * as any other automatic-storage local). The arrays themselves need no
      * initializer -- they are only ever read at indices the matching push
      * already wrote in THIS SAME invocation. */
-    fprintf(out, "    void* dr_ret_lbl[DOLRECOMP_BL_SHADOW_DEPTH];\n");
-    fprintf(out, "    u32 dr_ret_pc[DOLRECOMP_BL_SHADOW_DEPTH];\n");
-    fprintf(out, "    u32 dr_ret_sp = 0;\n");
+    if (has_shadow_calls) {
+        fprintf(out, "#if DOLRECOMP_LABEL_VALUES\n");
+        fprintf(out, "    void* dr_ret_lbl[DOLRECOMP_BL_SHADOW_DEPTH];\n");
+        fprintf(out, "#endif\n");
+        fprintf(out, "    u32 dr_ret_pc[DOLRECOMP_BL_SHADOW_DEPTH];\n");
+        fprintf(out, "    u32 dr_ret_sp = 0;\n");
+    }
     /* E1 (perf campaign 2): invocation-scoped locals. dr_ram: the RAM base
      * never changes after cpu_init, and a local (address never taken) cannot
      * be aliased by guest stores, so gcc keeps it in a host register instead
@@ -2949,10 +3223,11 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
      * reads it only after we return; no MMIO handler or ppc_* helper touches
      * it), so DR_RET() spilling at every exit is the complete coherence
      * contract. cycle_deadline is armed by the dispatch loop before every
-     * call and never written inside a chunk — const. The (void) uses keep
+     * call and never written inside a chunk â€” const. The (void) uses keep
      * chunks with no memory ops warning-clean. */
     fprintf(out, "    u8* const dr_ram = ctx->ram;\n");
     fprintf(out, "    u64 dr_cycles = ctx->cycles;\n");
+    fprintf(out, "#if DOLRECOMP_NATIVE_CHAIN\n    const u64 dr_chain_entry_cycles = dr_cycles;\n#endif\n");
     fprintf(out, "    const u64 dr_deadline = ctx->cycle_deadline;\n");
     fprintf(out, "    (void)dr_ram; (void)dr_deadline;\n");
     fprintf(out, s_relocatable ? "    switch (ctx->pc - dr_bias) {\n" : "    switch (ctx->pc) {\n");
@@ -2964,7 +3239,16 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * that assumed it started at the leader. Leaders (PREFIX == 0) skip
          * the subtraction; it would be a no-op anyway. */
         u32 prefix = cum[i] - dr_ppc_num_cycles(insts[i].op);
-        if (prefix != 0) {
+        if(fp_proven[i]) {
+            /* Cold arbitrary-PC entry cannot inherit the fallthrough proof.
+             * Its original prefix compensation and faulting CIA remain exact.
+             * Local branch targets are leaders and keep their body guard. */
+            fprintf(out,"    case 0x%08Xu:\n",insts[i].address);
+            if(prefix)fprintf(out,"        dr_cycles -= %uu;\n",prefix);
+            fprintf(out,"#if DOLRECOMP_FP_GUARD_SCOPE\n");
+            emit_fp_guard(out,insts[i].address,cum[i]);
+            fprintf(out,"#endif\n        goto label_%08X;\n",insts[i].address);
+        } else if (prefix != 0) {
             fprintf(out, "    case 0x%08Xu: dr_cycles -= %uu; goto label_%08X;\n",
                     insts[i].address, prefix, insts[i].address);
         } else {
@@ -2999,10 +3283,13 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * entries still land on their ordinary cmplwi/bc labels below, and
          * uniform mode (deadline==0) cannot enter it, preserving the pinned
          * uniform control-flow shape exactly. */
-        if (!s_relocatable && is_lwz_cmpli_beq_poll(insts, count, i)) {
-            emit_lwz_cmpli_beq_poll(out, &insts[i], &insts[i + 1u],
+        if (!s_relocatable && is_lwz_compare_beq_poll(insts, count, i)) {
+            if(insts[i+1u].op==PPC_OP_CMPI)
+                fprintf(out,"#if defined(DOLRECOMP_IDLE_SKIP) && DOLRECOMP_IDLE_SKIP\n");
+            emit_lwz_compare_beq_poll(out, &insts[i], &insts[i + 1u],
                                     &insts[i + 2u], cum[i + 2u],
                                     insts[i + 3u].address);
+            if(insts[i+1u].op==PPC_OP_CMPI)fprintf(out,"#endif\n");
         }
         /* Cycle cost is coalesced per basic block, charged at each exit
          * (return/goto emitted inside the instruction body, e.g. a taken
@@ -3013,8 +3300,8 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
          * entry above already retroactively adjusts for mid-block entry, so
          * the charge below (cum[i], the block-leader..here inclusive sum)
          * is exact regardless of where execution actually entered. Cost
-         * values are Dolphin's own oracle timing model — see ppc_cycles.c. */
-        emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i]);
+         * values are Dolphin's own oracle timing model â€” see ppc_cycles.c. */
+        emit_instruction_with_range(out, &insts[i], func_addr, func_end, cum[i],fp_proven[i],has_shadow_calls);
 
         if (block_ends_here && !ppc_op_always_exits(insts[i].op)) {
             /* This instruction can fall through (on at least one path) into
@@ -3028,11 +3315,24 @@ void emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr) {
     }
 
     fprintf(out, "    ctx->pc = %s;\n", emit_pc_literal(func_end));
-    /* Falling off the chunk's end is an exit like any other — spill the
+    /* Falling off the chunk's end is an exit like any other â€” spill the
      * cycles local (DR_RET()'s job everywhere else). */
-    fprintf(out, "    ctx->cycles = dr_cycles;\n");
+    fprintf(out, "    DR_RET();\n");
+    if (has_shadow_calls) {
+        /* Standard C counterpart of the GNU label-value pop above. It uses
+         * the same authenticated return PC and stack/deadline admission,
+         * and reaches the same local label without another CPU dispatch. */
+        fprintf(out, "#if !DOLRECOMP_LABEL_VALUES\n");
+        fprintf(out, "dr_return_dispatch:\n");
+        fprintf(out, s_relocatable ? "    switch (dr_ret_pc[dr_ret_sp] - dr_bias) {\n"
+                                  : "    switch (dr_ret_pc[dr_ret_sp]) {\n");
+        for (i = 0; i < count; ++i)
+            fprintf(out, "    case 0x%08Xu: goto label_%08X;\n", insts[i].address, insts[i].address);
+        fprintf(out, "    default: ctx->pc = dr_ret_pc[dr_ret_sp]; DR_RET();\n    }\n#endif\n");
+    }
     fprintf(out, "}\n\n");
 
     free(is_leader);
     free(cum);
+    free(fp_proven);
 }
