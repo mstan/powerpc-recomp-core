@@ -1,5 +1,7 @@
 # powerpc-recomp-core
 
+Current licensing and the grant for existing owner contributions are documented in [LICENSE-SCOPE.md](LICENSE-SCOPE.md).
+
 Shared PowerPC static-recompiler source package for GameCube/Wii low-level
 recompilation projects. The initial consumers are gcnllr and wiillr.
 
